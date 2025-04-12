@@ -22,3 +22,8 @@ void gdt_init() {
     gdt_reload_seg();
     LOG_OK("GDT Loaded.\n");
 }
+
+void gdt_reinit() {
+    __asm__ volatile ("lgdt %0" : : "m"(gdt_desc) : "memory");
+    gdt_reload_seg();
+}

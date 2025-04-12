@@ -13,6 +13,12 @@
 #include <vmm.h>
 #include <log.h>
 #include <heap.h>
+#include <acpi.h>
+#include <madt.h>
+#include <apic.h>
+#include <smp.h>
+#include <assert.h>
+#include <pit.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -90,22 +96,12 @@ void kmain() {
     pmm_init();
     vmm_init();
     slab_init();
-    size_t allocations[] = {8, 10, 24, 32, 33, 35, 85, 1024, 16384, 16385};
-    for (int i = 0; i < 10; i++) {
-        uint64_t *test = kmalloc(allocations[i]);
-        if (!test) {
-            LOG_ERROR("Didn't pass test when allocating %zu bytes.\n", allocations[i]);
-            break;
-        }
-        *test = 0xDEADBEEFC001;
-        if (*test == 0xDEADBEEFC001)
-            LOG_OK("Passed test for allocating %zu bytes.\n", allocations[i]);
-        else {
-            LOG_ERROR("Didn't pass test when allocating %zu bytes.\n", allocations[i]);
-            break;
-        }
-        kfree(test);
-    }
+    acpi_init();
+    madt_init();
+    lapic_init();
+    ioapic_init();
+    pit_init();
+    smp_init();
     printf("\x1b[36mLanOS\x1b[37m Booted!\n");
 
     hcf();

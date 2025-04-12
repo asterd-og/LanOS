@@ -9,7 +9,7 @@ ARCH := x86_64
 
 OSNAME := $(shell uname -s)
 
-QEMUFLAGS := -m 2G -no-reboot -no-shutdown
+QEMUFLAGS := -m 2G -no-reboot -no-shutdown -smp $(shell nproc)
 
 ifeq ($(OSNAME), Darwin)
 	QEMUFLAGS += -accel hvf

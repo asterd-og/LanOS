@@ -64,6 +64,7 @@ void vmm_init() {
 
     avl_t *avl_root = NULL;
     uint64_t first_free_addr = memmap->entries[0]->base + pmm_bitmap_pages * PAGE_SIZE;
+    LOG_INFO("0x%llx\n", first_free_addr);
     vma_region_t region = {
         .start = HIGHER_HALF(first_free_addr),
         .page_count = 0x100000,

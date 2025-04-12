@@ -44,3 +44,5 @@ typedef struct {
 } __attribute__((packed)) idt_desc_t;
 
 void idt_init();
+void idt_reinit();
+void idt_install_irq(uint8_t irq, void *handler);

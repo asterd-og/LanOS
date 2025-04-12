@@ -34,7 +34,9 @@
 #include <stdint.h>
 
 #include <stdio.h>
+#include <spinlock.h>
 
+NEW_LOCK(printf_lock);
 
 // define this globally (e.g. gcc -DPRINTF_INCLUDE_CONFIG_H ...) to include the
 // printf_config.h header file
@@ -863,11 +865,13 @@ static int _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, const
 
 int printf_(const char* format, ...)
 {
+  spinlock_lock(&printf_lock);
   va_list va;
   va_start(va, format);
   char buffer[1];
   const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
   va_end(va);
+  spinlock_free(&printf_lock);
   return ret;
 }
 
