@@ -3,6 +3,7 @@
 #include <pmm.h>
 #include <string.h>
 #include <limine.h>
+#include <smp.h>
 
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
 
@@ -64,7 +65,6 @@ void vmm_init() {
 
     avl_t *avl_root = NULL;
     uint64_t first_free_addr = memmap->entries[0]->base + pmm_bitmap_pages * PAGE_SIZE;
-    LOG_INFO("0x%llx\n", first_free_addr);
     vma_region_t region = {
         .start = HIGHER_HALF(first_free_addr),
         .page_count = 0x100000,
@@ -110,6 +110,22 @@ void vmm_map_range(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t 
 
 void vmm_switch_pagemap(pagemap_t *pagemap) {
     __asm__ volatile ("mov %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
+    if (smp_started)
+        this_cpu()->pagemap = pagemap;
+}
+
+pagemap_t *vmm_new_pagemap() {
+    pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)pmm_request());
+    pagemap->pml4 = HIGHER_HALF((uint64_t*)pmm_request());
+    pagemap->avl_root = NULL;
+    memset(pagemap->pml4, 0, PAGE_SIZE);
+    for (uint64_t i = 256; i < 512; i++)
+        pagemap->pml4[i] = kernel_pagemap->pml4[i];
+    // The avl root is defined after the pagemap is created
+    // I wont put it here because the starting address
+    // might vary from page map to page map (for example, in an ELF it might be
+    // defined after the last section in the linker.)
+    return pagemap;
 }
 
 void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count) {

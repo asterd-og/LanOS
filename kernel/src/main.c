@@ -60,6 +60,8 @@ void _putchar(char c) {
     flanterm_write(flanterm_ctx, &c, 1);
 }
 
+void kernel_task(void);
+
 void kmain() {
     if (LIMINE_BASE_REVISION_SUPPORTED == false) {
         hcf();
@@ -102,7 +104,16 @@ void kmain() {
     ioapic_init();
     pit_init();
     smp_init();
-    printf("\x1b[36mLanOS\x1b[37m Booted!\n");
+    sched_install();
+    sched_init();
+    sched_new_task(0, kernel_task);
+    lapic_ipi_all(0, SCHED_VEC);
 
     hcf();
+}
+
+void kernel_task(void) {
+    printf("\x1b[36mLanOS\x1b[37m Booted successfully!\n");
+    while (1) {
+    }
 }

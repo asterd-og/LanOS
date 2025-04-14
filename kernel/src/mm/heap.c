@@ -2,10 +2,13 @@
 #include <vmm.h>
 #include <pmm.h>
 #include <log.h>
+#include <spinlock.h>
 
 #define BIN_PAGES 8
 
 slab_bin_t *slab_bins[10]; // Up to 16 KB, starting at 32 B
+
+NEW_LOCK(heap_lock);
 
 slab_bin_t *slab_create_bin(uint64_t obj_size) {
     slab_bin_t *bin = vmm_alloc(kernel_pagemap, 1);
@@ -41,11 +44,13 @@ slab_bin_t *slab_get_bin(size_t size) {
 
 void *kmalloc(size_t size) {
     if (!size) return NULL;
+    spinlock_lock(&heap_lock);
     slab_bin_t *bin = slab_get_bin(size);
     if (!bin) {
         uint64_t page_count = DIV_ROUND_UP(size, PAGE_SIZE);
         size_t *start = vmm_alloc(kernel_pagemap, page_count);
         *start = page_count;
+        spinlock_free(&heap_lock);
         return start + 1;
     }
     while (bin->free_objs == 0) {
@@ -68,6 +73,7 @@ void *kmalloc(size_t size) {
     obj->bin = bin;
     bin->free += bin->obj_size + sizeof(slab_obj_t);
     bin->free_objs -= 1;
+    spinlock_free(&heap_lock);
     return (void*)(start + sizeof(slab_obj_t));
 }
 

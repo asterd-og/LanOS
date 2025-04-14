@@ -37,6 +37,11 @@ typedef struct {
     uint16_t flags;
 } __attribute__((packed)) madt_iso_t;
 
+typedef struct {
+    uint16_t resv;
+    uint64_t lapic_addr;
+} __attribute__((packed)) madt_lapic_ovr_t;
+
 extern madt_ioapic_t *madt_ioapic;
 extern madt_iso_t *madt_iso_list[16];
 extern uint64_t madt_apic_address;

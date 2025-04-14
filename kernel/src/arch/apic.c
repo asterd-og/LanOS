@@ -11,7 +11,7 @@ bool x2apic = false;
 
 void lapic_init() {
     uint64_t apic_msr = read_msr(0x1B);
-    lapic_address = HIGHER_HALF((uint64_t)(((apic_msr >> 12) & 0xFFFFF) << 12));
+    lapic_address = HIGHER_HALF(madt_apic_address);
     apic_msr |= 0x800; // Enable flag
     uint32_t a = 1, b = 0, c = 0, d = 0;
     __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(a));
@@ -55,8 +55,8 @@ void lapic_ipi(uint32_t lapic_id, uint32_t data) {
     lapic_write(0x300, data);
 }
 
-void lapic_ipi_all(uint32_t lapic_id, uint8_t vector) {
-    lapic_ipi(lapic_id, vector | 0x8000);
+void lapic_ipi_all(uint32_t lapic_id, uint32_t vector) {
+    lapic_ipi(lapic_id, vector | 0x80000);
 }
 
 void lapic_oneshot(uint32_t vector, uint64_t ms) {
