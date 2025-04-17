@@ -19,6 +19,8 @@
 #include <smp.h>
 #include <assert.h>
 #include <pit.h>
+#include <pci.h>
+#include <ahci.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -104,6 +106,8 @@ void kmain() {
     ioapic_init();
     pit_init();
     smp_init();
+    pci_init();
+    ahci_init();
     sched_install();
     sched_init();
     sched_new_task(0, kernel_task);

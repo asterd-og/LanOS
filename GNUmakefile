@@ -9,7 +9,10 @@ ARCH := x86_64
 
 OSNAME := $(shell uname -s)
 
-QEMUFLAGS := -m 2G -no-reboot -no-shutdown -smp $(shell nproc)
+QEMUFLAGS := -m 2G -no-reboot -no-shutdown -smp $(shell nproc) \
+			-drive id=disk,file=disk.txt,if=none \
+			-device ahci,id=ahci \
+			-device ide-hd,drive=disk,bus=ahci.4
 
 ifeq ($(OSNAME), Darwin)
 	QEMUFLAGS += -accel hvf

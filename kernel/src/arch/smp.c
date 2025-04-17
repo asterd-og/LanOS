@@ -47,8 +47,10 @@ void smp_init() {
     smp_cpu_list[bsp_cpu->id] = bsp_cpu;
     smp_started = true;
     LOG_INFO("Detected %zu CPUs.\n", mp_response->cpu_count);
-    for (uint64_t i = 1; i < mp_response->cpu_count; i++) {
+    for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
         struct limine_mp_info *mp_info = mp_response->cpus[i];
+        if (i == bsp_cpu->id)
+            continue;
         smp_cpu_list[mp_info->lapic_id] = (cpu_t*)kmalloc(sizeof(cpu_t));
         mp_info->goto_address = smp_cpu_init;
         mp_info->extra_argument = (uint64_t)mp_info;

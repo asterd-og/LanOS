@@ -35,7 +35,8 @@ uint64_t lapic_read(uint32_t reg) {
 void lapic_write(uint32_t reg, uint64_t value) {
     if (x2apic) {
         reg = (reg >> 4) + 0x800;
-        return write_msr(reg, value);
+        write_msr(reg, value);
+        return;
     }
     uint64_t addr = lapic_address + reg;
     *((volatile uint32_t*)addr) = value;
@@ -112,13 +113,15 @@ void ioapic_remap_gsi(uint32_t lapic_id, uint32_t gsi, uint8_t vec, uint32_t fla
 
 void ioapic_remap_irq(uint32_t lapic_id, uint8_t irq, uint8_t vec, bool masked) {
     madt_iso_t *iso = madt_iso_list[irq];
-    if (!iso)
-        return ioapic_remap_gsi(lapic_id, irq, vec, (masked ? 1 << 16 : 0));
+    if (!iso) {
+        ioapic_remap_gsi(lapic_id, irq, vec, (masked ? 1 << 16 : 0));
+        return;
+    }
     uint32_t flags = 0;
     if (iso->flags & (1 << 1)) flags |= 1 << 13;
     if (iso->flags & (1 << 3)) flags |= 1 << 15;
     if (masked) flags |= (1 << 16);
-    return ioapic_remap_gsi(lapic_id, iso->gsi, vec, flags);
+    ioapic_remap_gsi(lapic_id, iso->gsi, vec, flags);
 }
 
 void ioapic_init() {
