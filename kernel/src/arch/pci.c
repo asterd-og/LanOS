@@ -20,7 +20,7 @@ void pci_init() {
     }
 }
 
-pci_header_t *pci_get_dev(uint8_t class, uint8_t subclass) {
+pci_header_t *pci_get_dev(uint8_t _class, uint8_t subclass) {
     mcfg_entry_t *entry = NULL;
     uint64_t entry_count = (mcfg->header.len - sizeof(mcfg_t)) / sizeof(mcfg_entry_t);
 
@@ -34,7 +34,7 @@ pci_header_t *pci_get_dev(uint8_t class, uint8_t subclass) {
                          (slot << 15) | (func << 12));
                     pci_header_t *dev = HIGHER_HALF((pci_header_t*)phys_addr);
                     if (dev->vendor_id == 0xFFFF) continue;
-                    if (dev->class == class && dev->subclass == subclass)
+                    if (dev->_class == _class && dev->subclass == subclass)
                         return dev;
                         
                 }

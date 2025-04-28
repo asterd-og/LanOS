@@ -26,7 +26,7 @@ typedef struct {
     uint8_t rev;
     uint8_t prog_if;
     uint8_t subclass;
-    uint8_t class;
+    uint8_t _class;
     uint8_t cache_line_size;
     uint8_t lat_timer;
     uint8_t type;
@@ -50,4 +50,4 @@ typedef struct {
 } __attribute__((packed)) pci_header0_t;
 
 void pci_init();
-pci_header_t *pci_get_dev(uint8_t class, uint8_t subclass);
+pci_header_t *pci_get_dev(uint8_t _class, uint8_t subclass);

@@ -6,6 +6,8 @@
 #include <pmm.h>
 #include <log.h>
 
+uint64_t current_id = 0;
+
 void sched_init() {
     idt_install_irq(16, sched_switch);
 }
@@ -26,6 +28,7 @@ task_t *sched_new_task(uint32_t cpu_num, void *entry) {
     uint64_t stack = HIGHER_HALF((uint64_t)pmm_request());
     memset((void*)stack, 0, 4096);
 
+    task->id = current_id++;
     task->cpu_num = cpu_num;
     task->stack_top = stack;
     task->ctx.rip = (uint64_t)entry;
@@ -72,4 +75,8 @@ void sched_switch(context_t *ctx) {
     vmm_switch_pagemap(switch_to->pagemap);
     lapic_eoi();
     lapic_oneshot(SCHED_VEC, TASK_QUANTUM);
+}
+
+task_t *this_task() {
+    return this_cpu()->current_task;
 }

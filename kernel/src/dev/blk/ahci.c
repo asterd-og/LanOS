@@ -41,6 +41,12 @@ ahci_port_t *ahci_init_disk(hba_port_t *port, int port_num) {
         ahci_port->cmd_tbls[i] = cmd_tbl;
     }
 
+    // Start command engine
+    port->cmd |= HBA_CMD_FRE;
+    while (port->cmd & HBA_CMD_CR)
+        __asm__ volatile ("pause");
+    port->cmd |= HBA_CMD_ST;
+
     return ahci_port;
 }
 
@@ -118,9 +124,13 @@ int ahci_op(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer, 
     return 0;
 }
 
-int ahci_read(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer);
+int ahci_read(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer) {
+    return ahci_op(ahci_port, lba, count, buffer, false);
+}
 
-int ahci_write(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer);
+int ahci_write(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer) {
+    return ahci_op(ahci_port, lba, count, buffer, true);
+}
 
 uint32_t ahci_check_type(hba_port_t *port) {
     uint32_t ssts = port->ssts;
@@ -172,8 +182,5 @@ void ahci_init() {
         }
         pi >>= 1;
     }
-    char *buffer = HIGHER_HALF(pmm_request());
-    ahci_op(ahci_ports[0], 0, 1, PHYSICAL(buffer), false);
-    printf("Read buffer from AHCI: %s\n", buffer);
     LOG_OK("AHCI Initialized.\n");
 }

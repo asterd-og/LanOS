@@ -50,3 +50,18 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 
     return 0;
 }
+
+int strlen(const char *s1) {
+    int i = 0;
+    while (*s1++) i++;
+    return i;
+}
+
+int strcmp(const char *s1, const char *s2) {
+    int i = 0;
+    while (s1[i] != 0) {
+        if (s2[i] != s1[i]) return 1;
+        i++;
+    }
+    return 0;
+}

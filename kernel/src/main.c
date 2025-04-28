@@ -17,10 +17,11 @@
 #include <madt.h>
 #include <apic.h>
 #include <smp.h>
-#include <assert.h>
 #include <pit.h>
 #include <pci.h>
 #include <ahci.h>
+#include <sched.h>
+#include <ipc.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -79,21 +80,21 @@ void kmain() {
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
     flanterm_ctx = flanterm_fb_init(
-            NULL,
-            NULL,
-            framebuffer->address,
-            framebuffer->width, framebuffer->height, framebuffer->pitch,
-            framebuffer->red_mask_size, framebuffer->red_mask_shift,
-            framebuffer->green_mask_size, framebuffer->green_mask_shift,
-            framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
-            NULL,
-            NULL, NULL,
-            NULL, NULL,
-            NULL, NULL,
-            NULL, 0, 0, 1,
-            0, 0,
-            0
-        );
+        NULL,
+        NULL,
+        framebuffer->address,
+        framebuffer->width, framebuffer->height, framebuffer->pitch,
+        framebuffer->red_mask_size, framebuffer->red_mask_shift,
+        framebuffer->green_mask_size, framebuffer->green_mask_shift,
+        framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
+        NULL,
+        NULL, NULL,
+        NULL, NULL,
+        NULL, NULL,
+        NULL, 0, 0, 1,
+        0, 0,
+        0
+    );
 
     gdt_init();
     idt_init();

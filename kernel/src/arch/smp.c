@@ -1,3 +1,4 @@
+#include "vmm.h"
 #include <smp.h>
 #include <heap.h>
 #include <log.h>
@@ -21,14 +22,15 @@ uint64_t started_count = 0;
 bool smp_started = false;
 
 void smp_cpu_init(struct limine_mp_info *mp_info) {
+    vmm_switch_pagemap(kernel_pagemap);
     spinlock_lock(&smp_lock);
     gdt_reinit();
     idt_reinit();
-    vmm_switch_pagemap(kernel_pagemap);
     smp_cpu_list[mp_info->lapic_id]->id = mp_info->lapic_id;
     lapic_init();
     smp_cpu_list[mp_info->lapic_id]->lapic_ticks = lapic_init_timer();
     smp_cpu_list[mp_info->lapic_id]->task_idle = NULL;
+    smp_cpu_list[mp_info->lapic_id]->pagemap = kernel_pagemap;
     sched_install();
     LOG_OK("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -45,7 +47,6 @@ void smp_init() {
     bsp_cpu->lapic_ticks = lapic_init_timer();
     bsp_cpu->task_idle = NULL;
     smp_cpu_list[bsp_cpu->id] = bsp_cpu;
-    smp_started = true;
     LOG_INFO("Detected %zu CPUs.\n", mp_response->cpu_count);
     for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
         struct limine_mp_info *mp_info = mp_response->cpus[i];
@@ -57,6 +58,7 @@ void smp_init() {
     }
     while (started_count < mp_response->cpu_count - 1)
         __asm__ volatile ("pause");
+    smp_started = true;
     LOG_OK("SMP Initialised.\n");
 }
 
