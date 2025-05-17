@@ -22,6 +22,9 @@
 #include <ahci.h>
 #include <sched.h>
 #include <ipc.h>
+#include <vfs.h>
+#include <syscall.h>
+#include <devices.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -96,9 +99,13 @@ void kmain() {
         0
     );
 
-    gdt_init();
+    gdt_init(0);
     idt_init();
     pmm_init();
+
+    void* stack = HIGHER_HALF((void*)((uint64_t)pmm_request() + PAGE_SIZE));
+    tss_set_rsp(0, 0, stack);
+
     vmm_init();
     slab_init();
     acpi_init();
@@ -109,8 +116,15 @@ void kmain() {
     smp_init();
     pci_init();
     ahci_init();
+    char mnt_point = vfs_mount_disk(ahci_ports[0]);
+    LOG_OK("Mounted disk #0 as FAT32 (Letter %c).\n", mnt_point);
     sched_install();
     sched_init();
+    dev_init();
+    syscall_init();
+    vnode_t *node = vfs_open("A:/main");
+    sched_load_elf(0, node);
+    vfs_close(node);
     sched_new_task(0, kernel_task);
     lapic_ipi_all(0, SCHED_VEC);
 

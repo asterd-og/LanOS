@@ -10,7 +10,7 @@ ARCH := x86_64
 OSNAME := $(shell uname -s)
 
 QEMUFLAGS := -m 2G -no-reboot -no-shutdown -smp $(shell nproc) \
-			-drive id=disk,file=disk.txt,if=none \
+			-drive id=disk,file=disk.img,if=none \
 			-device ahci,id=ahci \
 			-device ide-hd,drive=disk,bus=ahci.4
 

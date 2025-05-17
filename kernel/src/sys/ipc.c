@@ -2,6 +2,7 @@
 #include <sched.h>
 #include <heap.h>
 #include <string.h>
+#include <math.h>
 
 ipc_ep_t *endpoints[IPC_MAX_EP] = { 0 };
 int16_t ep_count = 0;

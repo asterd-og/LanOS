@@ -4,8 +4,6 @@
 #include <stddef.h>
 #include <spinlock.h>
 
-#define MAX(a, b) (a > b ? b : a)
-
 #define IPC_MSG_LEN 256
 #define IPC_MAX_MSG 128
 #define IPC_MAX_EP 512

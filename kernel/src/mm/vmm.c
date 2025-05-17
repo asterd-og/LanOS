@@ -29,7 +29,13 @@ void vmm_init() {
     kernel_pagemap = HIGHER_HALF((pagemap_t*)pmm_request());
     kernel_pagemap->pml4 = HIGHER_HALF((uint64_t*)pmm_request());
     memset(kernel_pagemap->pml4, 0, PAGE_SIZE);
-    
+
+    kernel_pagemap->vma_head = HIGHER_HALF((vma_region_t*)pmm_request());
+    kernel_pagemap->vma_head->next = kernel_pagemap->vma_head->prev = kernel_pagemap->vma_head;
+
+    uint64_t first_free_addr = memmap->entries[0]->base + pmm_bitmap_pages * PAGE_SIZE;
+    vma_add_region(kernel_pagemap, HIGHER_HALF(first_free_addr), 1, MM_READ | MM_WRITE);
+
     uint64_t executable_vaddr = executable_address->virtual_base;
     uint64_t executable_paddr = executable_address->physical_base;
 
@@ -63,17 +69,31 @@ void vmm_init() {
 
     vmm_switch_pagemap(kernel_pagemap);
 
-    avl_t *avl_root = NULL;
-    uint64_t first_free_addr = memmap->entries[0]->base + pmm_bitmap_pages * PAGE_SIZE;
-    vma_region_t region = {
-        .start = HIGHER_HALF(first_free_addr),
-        .page_count = 0x100000,
-        .flags = MM_READ | MM_WRITE
-    };
-    avl_root = avl_insert_node(avl_root, 0x100000, &region);
-    kernel_pagemap->avl_root = avl_root;
-
     LOG_OK("VMM Initialised.\n");
+}
+
+vma_region_t *vma_add_region(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags) {
+    vma_region_t *region = HIGHER_HALF((vma_region_t*)pmm_request());
+    region->start = start;
+    region->page_count = page_count;
+    region->flags = flags;
+    region->prev = pagemap->vma_head->prev;
+    region->next = pagemap->vma_head;
+    pagemap->vma_head->prev->next = region;
+    pagemap->vma_head->prev = region;
+    return region;
+}
+
+vma_region_t *vma_insert_region(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags) {
+    vma_region_t *region = HIGHER_HALF((vma_region_t*)pmm_request());
+    region->start = start;
+    region->page_count = page_count;
+    region->flags = flags;
+    region->prev = after;
+    region->next = after->next;
+    after->next->prev = region;
+    after->next = region;
+    return region;
 }
 
 uint64_t *vmm_new_level(uint64_t *level, uint64_t entry) {
@@ -103,6 +123,22 @@ void vmm_map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags)
     pt[PTE(vaddr)] = paddr | flags;
 }
 
+uint64_t vmm_get_phys(pagemap_t *pagemap, uint64_t vaddr) {
+    uint64_t *pdpt = (uint64_t*)pagemap->pml4[PML4E(vaddr)];
+    if (!PAGE_EXISTS(pdpt)) return 0;
+    pdpt = HIGHER_HALF(PTE_MASK(pdpt));
+
+    uint64_t *pd = (uint64_t*)pdpt[PDPTE(vaddr)];
+    if (!PAGE_EXISTS(pd)) return 0;
+    pd = HIGHER_HALF(PTE_MASK(pd));
+
+    uint64_t *pt = (uint64_t*)pd[PDE(vaddr)];
+    if (!PAGE_EXISTS(pt)) return 0;
+    pt = HIGHER_HALF(PTE_MASK(pt));
+
+    return PTE_MASK(pt[PTE(vaddr)]);
+}
+
 void vmm_map_range(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count) {
     for (uint64_t i = 0; i < count; i++)
         vmm_map(pagemap, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
@@ -117,69 +153,49 @@ void vmm_switch_pagemap(pagemap_t *pagemap) {
 pagemap_t *vmm_new_pagemap() {
     pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)pmm_request());
     pagemap->pml4 = HIGHER_HALF((uint64_t*)pmm_request());
-    pagemap->avl_root = NULL;
+    pagemap->vma_head = HIGHER_HALF((vma_region_t*)pmm_request());
+    pagemap->vma_head->next = pagemap->vma_head->prev = pagemap->vma_head;
     memset(pagemap->pml4, 0, PAGE_SIZE);
     for (uint64_t i = 256; i < 512; i++)
         pagemap->pml4[i] = kernel_pagemap->pml4[i];
-    // The avl root is defined after the pagemap is created
+    // The vma root is defined after the pagemap is created
     // I wont put it here because the starting address
     // might vary from page map to page map (for example, in an ELF it might be
     // defined after the last section in the linker.)
     return pagemap;
 }
 
-void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count) {
-    // Look for the best fit on the tree
-    avl_t *best_node = pagemap->avl_root;
-    avl_t *node = pagemap->avl_root;
-    while (node != NULL) {
-        if (node->key >= page_count) {
-            best_node = node;
-            node = node->left;
-        } else node = node->right;
+void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
+    // Look for the first fit on the list.
+    if (!page_count) return NULL;
+    vma_region_t *region = pagemap->vma_head->next;
+    if (region == pagemap->vma_head) {
+        LOG_ERROR("Critical VMA error: No new alloc hint.\n");
+        return NULL;
     }
-    vma_region_t *region = (vma_region_t*)best_node->data;
-    uint64_t id = 0;
-    if (best_node->dup) {
-        avl_dup_t *dup = best_node->dup;
-        id++;
-        do {
-            if (dup->next == best_node->dup)
-                break;
-            dup = dup->next;
-            id++;
-        } while (1);
-        region = (vma_region_t*)dup->data;
+    uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
+    uint64_t addr = 0;
+    for (; region != pagemap->vma_head; region = region->next) {
+        if (region->next == pagemap->vma_head) {
+            addr = region->start + (region->page_count * PAGE_SIZE);
+            vma_add_region(pagemap, addr, page_count, flags);
+            break;
+        }
+        uint64_t region_end = region->start + (region->page_count * PAGE_SIZE);
+        if (region->next->start >= region_end + (page_count * PAGE_SIZE)) {
+            addr = region_end;
+            vma_insert_region(region, addr, page_count, flags);
+            break;
+        }
     }
-    uint64_t start = region->start;
-    uint64_t new_start = region->start + (page_count * PAGE_SIZE);
-    uint64_t new_page_count = region->page_count - page_count;
-    pagemap->avl_root = avl_delete_node(pagemap->avl_root, best_node->key, id);
-    if (new_page_count != 0) {
-        vma_region_t new_region = {
-            .start = new_start,
-            .page_count = new_page_count,
-            .flags = MM_READ | MM_WRITE
-        };
-        pagemap->avl_root = avl_insert_node(pagemap->avl_root,
-                new_page_count, &new_region);
+    for (int i = 0; i < page_count; i++) {
+        vmm_map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)pmm_request(), flags);
     }
-    // Map the pages
-    for (uint64_t i = 0; i < page_count; i++) {
-        vmm_map(kernel_pagemap, start + (i * PAGE_SIZE),
-                (uint64_t)pmm_request(), MM_READ | MM_WRITE);
-    }
-    return (void*)start;
+    return (void*)addr;
 }
 
 void vmm_free(pagemap_t *pagemap, void *ptr, uint64_t page_count) {
-    // TODO: Find the node containing the region
-    // in which this page belonged to (to maybe merge nodes together)
-    // TODO: Free the physical pages.
-    vma_region_t region = {
-        .start = (uint64_t)ptr,
-        .page_count = page_count,
-        .flags = MM_READ | MM_WRITE
-    };
-    pagemap->avl_root = avl_insert_node(pagemap->avl_root, page_count, &region);
+    // TODO: Free
+    if (((uint64_t)ptr & 0xfff) != 0)
+        return;
 }

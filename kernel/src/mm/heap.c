@@ -3,91 +3,148 @@
 #include <pmm.h>
 #include <log.h>
 #include <spinlock.h>
+#include <string.h>
+#include <assert.h>
 
-#define BIN_PAGES 8
+#define SLAB_PAGES 4
+#define SLAB_SIZE (SLAB_PAGES * PAGE_SIZE)
 
-slab_bin_t *slab_bins[10]; // Up to 16 KB, starting at 32 B
+#define SLAB_IDX(cache, i) (slab_obj_t*)(cache->slabs + (i * (sizeof(slab_obj_t) + cache->obj_size)))
+#define OBJS_IN_SLAB(cache) (SLAB_SIZE / (cache->obj_size + sizeof(slab_obj_t)))
 
-NEW_LOCK(heap_lock);
+// Only 8 because once we hit 4096, the VMA is going to take over.
+slab_cache_t *caches[8] = { 0 };
 
-slab_bin_t *slab_create_bin(uint64_t obj_size) {
-    slab_bin_t *bin = vmm_alloc(kernel_pagemap, 1);
-    bin->obj_size = obj_size;
-    bin->max_objs = (PAGE_SIZE * BIN_PAGES) / obj_size;
-    bin->free_objs = bin->max_objs;
-    bin->free = 0;
-    uint64_t pages = bin->max_objs * obj_size;
-    pages += bin->max_objs * sizeof(size_t) + sizeof(uint64_t);
-    pages = DIV_ROUND_UP(pages, PAGE_SIZE);
-    bin->area = vmm_alloc(kernel_pagemap, pages);
-    bin->area_size = pages * PAGE_SIZE;
-    bin->empty = NULL;
-    return bin;
+slab_cache_t *slab_create_cache(uint64_t obj_size) {
+    slab_cache_t *cache = (slab_cache_t*)vmm_alloc(kernel_pagemap, 1, false);
+    cache->obj_size = obj_size;
+    uint64_t obj_count = SLAB_SIZE / (cache->obj_size + sizeof(slab_obj_t));
+    uint64_t total_size = obj_count * (cache->obj_size + sizeof(slab_obj_t));
+    cache->slabs = vmm_alloc(kernel_pagemap, DIV_ROUND_UP(total_size, PAGE_SIZE), false);
+    cache->free_idx = 0;
+    cache->used = false;
+    cache->empty_cache = NULL;
+    return cache;
 }
 
 void slab_init() {
-    uint64_t last_size = 16;
-    for (int i = 0; i < 10; i++) {
-        uint64_t size = last_size * 2;
+    uint64_t last_size = 8;
+    uint64_t size = 0;
+    for (int i = 0; i < 8; i++) {
+        size = last_size * 2;
         last_size = size;
-        slab_bins[i] = slab_create_bin(size);
+        caches[i] = slab_create_cache(size);
     }
 }
 
-slab_bin_t *slab_get_bin(size_t size) {
-    uint64_t bin = 64 - __builtin_clzll(size - 1);
-    bin = (bin >= 5 ? bin - 5 : 0);
-    if (bin > 9)
+slab_cache_t *slab_get_cache(size_t size) {
+    uint64_t cache = 64 - __builtin_clzll(size - 1);
+    cache = (cache >= 4 ? cache - 4 : 0);
+    if (cache > 7)
         return NULL;
-    return slab_bins[bin];
+    return caches[cache];
+}
+
+int64_t slab_find_free(slab_cache_t *cache) {
+    if (cache->free_idx < OBJS_IN_SLAB(cache))
+        return cache->free_idx++;
+    for (uint64_t i = 0; i < OBJS_IN_SLAB(cache); i++) {
+        slab_obj_t *obj = SLAB_IDX(cache, i);
+        if (obj->magic != SLAB_MAGIC)
+            return i;
+    }
+    return -1;
+}
+
+slab_cache_t *cache_get_empty(slab_cache_t *cache) {
+    slab_cache_t *empty = cache;
+    while (empty->used) {
+        if (!empty->empty_cache) {
+            empty->empty_cache = slab_create_cache(cache->obj_size);
+            empty = empty->empty_cache;
+            break;
+        }
+        empty = empty->empty_cache;
+    }
+    return empty;
+}
+
+void *slab_alloc(size_t size) {
+    slab_cache_t *cache = slab_get_cache(size);
+    if (!cache) {
+        uint64_t total_pages = DIV_ROUND_UP(size + sizeof(slab_page_t), PAGE_SIZE);
+        slab_page_t *page = vmm_alloc(kernel_pagemap, total_pages, false);
+        page->magic = SLAB_MAGIC;
+        page->page_count = total_pages;
+        return (void*)(page + 1);
+    }
+    bool found = false;
+    int64_t free_obj;
+    slab_obj_t *obj = NULL;
+    while (!found) {
+        if (cache->used) {
+            cache = cache_get_empty(cache);
+        }
+        free_obj = slab_find_free(cache);
+        if (free_obj == -1)
+            cache->used = true;
+        else {
+            obj = SLAB_IDX(cache, free_obj);
+            found = true;
+        }
+    }
+    obj->cache = cache;
+    obj->magic = SLAB_MAGIC;
+    return (void*)(obj + 1);
+}
+
+void *slab_realloc(void *ptr, size_t size) {
+    if (!ptr) return slab_alloc(size);
+    uint64_t old_size = 0;
+    slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
+    if (page->magic != SLAB_MAGIC) {
+        slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
+        if (obj->magic != SLAB_MAGIC) {
+            LOG_ERROR("Critical SLAB error: Trying to reallocate invalid ptr %d %x %x %p.\n");
+            ASSERT(0);
+            return NULL;
+        }
+        old_size = obj->cache->obj_size;
+    } else {
+        old_size = page->page_count * PAGE_SIZE;
+    }
+    void *new_ptr = slab_alloc(size);
+    memcpy(new_ptr, ptr, (old_size > size ? size : old_size));
+    slab_free(ptr);
+    return new_ptr;
+}
+
+void slab_free(void *ptr) {
+    slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
+    if (page->magic != SLAB_MAGIC) {
+        slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
+        if (obj->magic != SLAB_MAGIC) {
+            LOG_ERROR("Critical SLAB error: Trying to free invalid ptr.\n");
+            return;
+        }
+        slab_cache_t *cache = obj->cache;
+        if (cache->used)
+            cache->used = false;
+        obj->magic = 0;
+        return;
+    }
+    uint64_t page_count = page->page_count;
+    vmm_free(kernel_pagemap, page, page_count);
 }
 
 void *kmalloc(size_t size) {
-    if (!size) return NULL;
-    spinlock_lock(&heap_lock);
-    slab_bin_t *bin = slab_get_bin(size);
-    if (!bin) {
-        uint64_t page_count = DIV_ROUND_UP(size, PAGE_SIZE);
-        size_t *start = vmm_alloc(kernel_pagemap, page_count);
-        *start = page_count;
-        spinlock_free(&heap_lock);
-        return start + 1;
-    }
-    while (bin->free_objs == 0) {
-        if (!bin->empty)
-            bin->empty = slab_create_bin(bin->obj_size);
-        bin = bin->empty;
-    }
-    if (bin->free >= bin->area_size) {
-        uint64_t start = (uint64_t)bin->area;
-        slab_obj_t *obj = (slab_obj_t*)start;
-        while (obj->size == bin->obj_size) {
-            start += sizeof(slab_obj_t) + bin->obj_size;
-            obj = (slab_obj_t*)start;
-        }
-        bin->free = start - (uint64_t)bin->area;
-    }
-    uint64_t start = (uint64_t)bin->area + bin->free;
-    slab_obj_t *obj = (slab_obj_t*)start;
-    obj->size = bin->obj_size;
-    obj->bin = bin;
-    bin->free += bin->obj_size + sizeof(slab_obj_t);
-    bin->free_objs -= 1;
-    spinlock_free(&heap_lock);
-    return (void*)(start + sizeof(slab_obj_t));
+    return slab_alloc(size);
+}
+
+void *krealloc(void *ptr, size_t size) {
+    return slab_realloc(ptr, size);
 }
 
 void kfree(void *ptr) {
-    uint64_t llptr = (uint64_t)ptr;
-    if (((llptr - 8) & 0xfff) == 0) {
-        // TODO: Test if a bin allocation can ever be in a page boundary.
-        uint64_t page_count = *(uint64_t*)(ptr - 8);
-        vmm_free(kernel_pagemap, (void*)(llptr - 8), page_count);
-        return;
-    }
-    slab_obj_t *obj = (slab_obj_t*)(llptr - sizeof(slab_obj_t));
-    slab_bin_t *bin = obj->bin;
-    bin->free_objs += 1;
-    if (bin->free_objs == 1)
-        bin->free = (uint64_t)obj - (uint64_t)bin->area;
+    slab_free(ptr);
 }

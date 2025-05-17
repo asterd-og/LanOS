@@ -1,4 +1,3 @@
-#include "vmm.h"
 #include <smp.h>
 #include <heap.h>
 #include <log.h>
@@ -9,6 +8,8 @@
 #include <gdt.h>
 #include <idt.h>
 #include <apic.h>
+#include <assert.h>
+#include <pmm.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_mp_request limine_mp = {
@@ -16,7 +17,7 @@ static volatile struct limine_mp_request limine_mp = {
     .revision = 0
 };
 
-cpu_t *smp_cpu_list[256];
+cpu_t *smp_cpu_list[MAX_CPU];
 NEW_LOCK(smp_lock);
 uint64_t started_count = 0;
 bool smp_started = false;
@@ -24,10 +25,12 @@ bool smp_started = false;
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     vmm_switch_pagemap(kernel_pagemap);
     spinlock_lock(&smp_lock);
-    gdt_reinit();
+    gdt_init(mp_info->lapic_id);
     idt_reinit();
     smp_cpu_list[mp_info->lapic_id]->id = mp_info->lapic_id;
     lapic_init();
+    void* stack = HIGHER_HALF((void*)((uint64_t)pmm_request() + PAGE_SIZE));
+    tss_set_rsp(0, 0, stack);
     smp_cpu_list[mp_info->lapic_id]->lapic_ticks = lapic_init_timer();
     smp_cpu_list[mp_info->lapic_id]->task_idle = NULL;
     smp_cpu_list[mp_info->lapic_id]->pagemap = kernel_pagemap;
@@ -41,6 +44,10 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
 
 void smp_init() {
     struct limine_mp_response *mp_response = limine_mp.response;
+    if (mp_response->cpu_count > MAX_CPU) {
+        LOG_ERROR("The system has more CPUs (%d) than allowed. Change MAX_CPU on smp.h\n", mp_response->cpu_count);
+        ASSERT(0);
+    }
     cpu_t *bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t));
     bsp_cpu->id = mp_response->bsp_lapic_id;
     bsp_cpu->pagemap = kernel_pagemap;

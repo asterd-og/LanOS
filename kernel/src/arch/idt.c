@@ -47,7 +47,7 @@ void idt_set_entry(uint16_t vector, void *isr, uint8_t flags);
 
 void idt_init() {
     for (uint16_t vector = 0; vector < 256; vector++)
-        idt_set_entry(vector, idt_int_table[vector], 0x8E);
+        idt_set_entry(vector, idt_int_table[vector], (vector == 0x80 ? 0xef : 0x8e));
 
     idt_desc.size = sizeof(idt_entries) - 1;
     idt_desc.address = (uint64_t)&idt_entries;

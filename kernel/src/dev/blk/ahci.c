@@ -1,3 +1,4 @@
+#include "smp.h"
 #include <ahci.h>
 #include <pci.h>
 #include <log.h>
@@ -5,6 +6,7 @@
 #include <vmm.h>
 #include <heap.h>
 #include <string.h>
+#include <math.h>
 
 ahci_port_t *ahci_ports[32];
 int connected_ports = 0;
@@ -32,7 +34,7 @@ ahci_port_t *ahci_init_disk(hba_port_t *port, int port_num) {
 
     hba_cmd_header_t *cmd_hdr = (hba_cmd_header_t*)clb;
     for (int i = 0; i < 32; i++) {
-        cmd_hdr[i].prdtl = 1;
+        cmd_hdr[i].prdtl = 8;
         void *cmd_tbl = HIGHER_HALF(pmm_request());
         uint64_t cmd_tbl_phys = PHYSICAL((uint64_t)cmd_tbl);
         cmd_hdr[i].ctba_low = LOW(cmd_tbl_phys);
@@ -75,7 +77,7 @@ void ahci_send_cmd(hba_port_t *port, uint32_t slot) {
     port->cmd &= ~HBA_CMD_FRE;
 }
 
-// Buffer should be the physical address
+// Buffer should be the virtual address
 int ahci_op(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer, bool w) {
     hba_port_t *port = ahci_port->port;
     port->is = (uint32_t)-1;
@@ -87,17 +89,20 @@ int ahci_op(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer, 
     cmd_hdr += slot;
     cmd_hdr->cfl = sizeof(fis_h2d_t) / sizeof(uint32_t);
     cmd_hdr->w = w;
-    cmd_hdr->prdtl = 1; // TODO: Set this size according to the page size
+    cmd_hdr->prdtl = DIV_ROUND_UP(count * 512, PAGE_SIZE);
 
     hba_cmd_tbl_t *cmd_tbl = (hba_cmd_tbl_t*)ahci_port->cmd_tbls[slot];
     memset(cmd_tbl, 0, sizeof(hba_cmd_tbl_t) + (cmd_hdr->prdtl - 1) * sizeof(hba_prdte_t));
 
     int i = 0;
-    // TODO: Handle multiple prdts
-    cmd_tbl->entries[i].dba_low = LOW((uint64_t)buffer);
-    cmd_tbl->entries[i].dba_high = HIGH((uint64_t)buffer);
-    cmd_tbl->entries[i].dbc = count * 512 - 1;
-    cmd_tbl->entries[i].i = 0;
+    int32_t icnt = (int32_t)count;
+    for (; icnt > 0; icnt -= PAGE_SIZE / 512) {
+        uint64_t page = vmm_get_phys(this_cpu()->pagemap, (uint64_t)buffer + (i * PAGE_SIZE));
+        cmd_tbl->entries[i].dba_low = LOW(page);
+        cmd_tbl->entries[i].dba_high = HIGH(page);
+        cmd_tbl->entries[i].dbc = MAX(icnt * 512 - 1, PAGE_SIZE - 1);
+        i++;
+    }
 
     fis_h2d_t *fis_cmd = (fis_h2d_t*)(&cmd_tbl->cmd_fis);
     fis_cmd->fis_type = FIS_TYPE_REG_H2D;

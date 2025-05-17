@@ -2,22 +2,34 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
-typedef struct slab_bin_t {
-    char *area;
-    size_t obj_size;
-    size_t free_objs;
-    size_t max_objs;
-    size_t area_size;
-    uint64_t free;
-    struct slab_bin_t *empty; // Points to the next empty bin
-} slab_bin_t;
+#define SLAB_MAGIC (uint32_t)0xdeadbeef
+
+typedef struct slab_cache_t {
+    void *slabs;
+    uint64_t obj_size;
+    uint64_t free_idx;
+    bool used;
+    struct slab_cache_t *empty_cache;
+} slab_cache_t;
 
 typedef struct {
-    size_t size;
-    slab_bin_t *bin;
+    bool used;
+    slab_cache_t *cache;
+    uint32_t magic;
 } __attribute__((packed)) slab_obj_t;
 
+typedef struct {
+    uint32_t magic;
+    uint64_t page_count;
+} __attribute__((packed)) slab_page_t;
+
 void slab_init();
+void *slab_alloc(size_t size);
+void *slab_realloc(void *ptr, size_t size);
+void slab_free(void *ptr);
+
 void *kmalloc(size_t size);
+void *krealloc(void *ptr, size_t size);
 void kfree(void *ptr);
