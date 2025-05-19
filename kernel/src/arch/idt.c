@@ -2,6 +2,7 @@
 #include <log.h>
 #include <apic.h>
 #include <assert.h>
+#include <serial.h>
 
 const char *exception_messages[32] = {
     "Division by zero",
@@ -93,6 +94,7 @@ void idt_exception_handler(context_t *ctx) {
     if (ctx->int_no >= 32)
         return idt_irq_handler(ctx);
     LOG_ERROR("Kernel exception caught: %s.\n", exception_messages[ctx->int_no]);
+    serial_printf("Kernel crash at 0x%p. RSP: 0x%p\n", ctx->rip, ctx->rsp);
     // TODO: Dump registers.
     __asm__ volatile ("cli\n\t.1:\n\thlt\n\tjmp .1\n");
 }

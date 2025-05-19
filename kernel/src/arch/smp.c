@@ -29,8 +29,6 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     idt_reinit();
     smp_cpu_list[mp_info->lapic_id]->id = mp_info->lapic_id;
     lapic_init();
-    void* stack = HIGHER_HALF((void*)((uint64_t)pmm_request() + PAGE_SIZE));
-    tss_set_rsp(0, 0, stack);
     smp_cpu_list[mp_info->lapic_id]->lapic_ticks = lapic_init_timer();
     smp_cpu_list[mp_info->lapic_id]->task_idle = NULL;
     smp_cpu_list[mp_info->lapic_id]->pagemap = kernel_pagemap;

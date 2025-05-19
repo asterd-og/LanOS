@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <spinlock.h>
 
-#define IPC_MSG_LEN 256
+#define IPC_MSG_LEN 512
 #define IPC_MAX_MSG 128
 #define IPC_MAX_EP 512
 
@@ -27,4 +27,4 @@ typedef struct {
 int16_t ipc_create_ep(char *name);
 int16_t ipc_find_ep(char *name);
 void ipc_send(uint8_t *data, size_t len, int16_t id);
-void ipc_recv(int16_t id, uint8_t *buffer);
+void ipc_recv(uint8_t *buffer, size_t len, int16_t id);

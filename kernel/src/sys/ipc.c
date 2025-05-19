@@ -3,6 +3,7 @@
 #include <heap.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 ipc_ep_t *endpoints[IPC_MAX_EP] = { 0 };
 int16_t ep_count = 0;
@@ -35,20 +36,21 @@ void ipc_send(uint8_t *data, size_t len, int16_t id) {
     if (write == IPC_MAX_MSG) write = 0;
     memcpy(ep->msgs[write].data, data, MAX(len, IPC_MSG_LEN));
 
-    ep->flags |= IPC_HAS_MSG;
     ep->msg_write++;
+    ep->flags |= IPC_HAS_MSG;
     spinlock_free(&ep->lock);
 }
 
-void ipc_recv(int16_t id, uint8_t *buffer) {
+void ipc_recv(uint8_t *buffer, size_t len, int16_t id) {
     if (id < 0) return;
     ipc_ep_t *ep = endpoints[id];
     // Only the IPC endpoint owner can read from it
     if (ep->owner != this_task()->id)
         return;
 
-    while ((ep->flags & IPC_HAS_MSG) == 0)
+    while ((ep->flags & IPC_HAS_MSG) != IPC_HAS_MSG) {
         __asm__ volatile ("pause");
+    }
 
     spinlock_lock(&ep->lock);
     uint8_t read = ep->msg_read++;
@@ -56,6 +58,6 @@ void ipc_recv(int16_t id, uint8_t *buffer) {
         ep->flags &= ~IPC_HAS_MSG;
     if (ep->msg_read == IPC_MAX_MSG) ep->msg_read = 0;
 
-    memcpy(buffer, ep->msgs[read].data, IPC_MSG_LEN);
+    memcpy(buffer, ep->msgs[read].data, len);
     spinlock_free(&ep->lock);
 }

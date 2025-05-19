@@ -9,15 +9,14 @@
 #include <stdio.h>
 
 void f32_disk_read(f32_info_t *info, uint64_t sector, void *buffer, size_t size) {
-    if (size > 10 * 512) {
-        LOG_ERROR("FAT32 Tried to read more than 10 sectors.\n");
+    if (size > info->cluster_size) {
+        LOG_ERROR("FAT32 Tried to read more than one cluster at a time.\n");
         return;
     }
     ahci_read(info->port, sector, DIV_ROUND_UP(size, 512), info->disk_buf);
     for (int i = 0; i < size; i++) {
         ((uint8_t*)buffer)[i] = info->disk_buf[i];
     }
-    //memcpy(buffer, info->disk_buf, size);
 }
 
 uint32_t f32_cluster_to_sector(f32_info_t *info, uint32_t cluster) {
@@ -196,12 +195,16 @@ vnode_t *f32_find_dir(vnode_t *node, char *name) {
 void f32_mount(vnode_t *node, ahci_port_t *port) {
     f32_info_t *info = (f32_info_t*)kmalloc(sizeof(f32_info_t));
     info->port = port;
-    info->disk_buf = vmm_alloc(kernel_pagemap, 10, false);
+    info->disk_buf = vmm_alloc(kernel_pagemap, 1, false);
 
     f32_bpb_t *bpb = (f32_bpb_t*)kmalloc(512);
     f32_disk_read(info, 0, bpb, 512);
 
     f32_ebpb_t *ebpb = (f32_ebpb_t*)bpb->ext_bpb;
+
+    size_t cluster_size = bpb->sectors_per_cluster * 512;
+    vmm_free(kernel_pagemap, info->disk_buf, 1);
+    info->disk_buf = vmm_alloc(kernel_pagemap, DIV_ROUND_UP(cluster_size, PAGE_SIZE), false);
 
     f32_fsinfo_t *fsinfo = (f32_fsinfo_t*)kmalloc(sizeof(f32_fsinfo_t));
     f32_disk_read(info, ebpb->fsinfo_sector, fsinfo, sizeof(f32_fsinfo_t));
@@ -211,7 +214,7 @@ void f32_mount(vnode_t *node, ahci_port_t *port) {
     info->fsinfo = fsinfo;
 
     info->data_start = bpb->resv_sector_count + (bpb->fat_count * ebpb->sectors_per_fat);
-    info->cluster_size = bpb->sectors_per_cluster * 512;
+    info->cluster_size = cluster_size;
 
     if (info->cluster_size % 32 != 0) {
         LOG_ERROR("FAT32 Cluster size isn't divisible by 32.\n");

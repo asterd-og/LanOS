@@ -6,6 +6,8 @@
 #include <string.h>
 #include <assert.h>
 
+NEW_LOCK(heap_lock);
+
 #define SLAB_PAGES 4
 #define SLAB_SIZE (SLAB_PAGES * PAGE_SIZE)
 
@@ -70,12 +72,14 @@ slab_cache_t *cache_get_empty(slab_cache_t *cache) {
 }
 
 void *slab_alloc(size_t size) {
+    spinlock_lock(&heap_lock);
     slab_cache_t *cache = slab_get_cache(size);
     if (!cache) {
         uint64_t total_pages = DIV_ROUND_UP(size + sizeof(slab_page_t), PAGE_SIZE);
         slab_page_t *page = vmm_alloc(kernel_pagemap, total_pages, false);
         page->magic = SLAB_MAGIC;
         page->page_count = total_pages;
+        spinlock_free(&heap_lock);
         return (void*)(page + 1);
     }
     bool found = false;
@@ -95,6 +99,7 @@ void *slab_alloc(size_t size) {
     }
     obj->cache = cache;
     obj->magic = SLAB_MAGIC;
+    spinlock_free(&heap_lock);
     return (void*)(obj + 1);
 }
 
@@ -120,21 +125,25 @@ void *slab_realloc(void *ptr, size_t size) {
 }
 
 void slab_free(void *ptr) {
+    spinlock_lock(&heap_lock);
     slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
     if (page->magic != SLAB_MAGIC) {
         slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
         if (obj->magic != SLAB_MAGIC) {
             LOG_ERROR("Critical SLAB error: Trying to free invalid ptr.\n");
+            spinlock_free(&heap_lock);
             return;
         }
         slab_cache_t *cache = obj->cache;
         if (cache->used)
             cache->used = false;
         obj->magic = 0;
+        spinlock_free(&heap_lock);
         return;
     }
     uint64_t page_count = page->page_count;
     vmm_free(kernel_pagemap, page, page_count);
+    spinlock_free(&heap_lock);
 }
 
 void *kmalloc(size_t size) {

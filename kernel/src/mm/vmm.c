@@ -144,10 +144,14 @@ void vmm_map_range(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t 
         vmm_map(pagemap, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
 }
 
-void vmm_switch_pagemap(pagemap_t *pagemap) {
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
-    if (smp_started)
+pagemap_t *vmm_switch_pagemap(pagemap_t *pagemap) {
+    pagemap_t *old_pagemap = NULL;
+    if (smp_started) {
+        old_pagemap = this_cpu()->pagemap;
         this_cpu()->pagemap = pagemap;
+    }
+    __asm__ volatile ("mov %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
+    return old_pagemap;
 }
 
 pagemap_t *vmm_new_pagemap() {
@@ -165,9 +169,8 @@ pagemap_t *vmm_new_pagemap() {
     return pagemap;
 }
 
-void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
+uint64_t vmm_internal_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
     // Look for the first fit on the list.
-    if (!page_count) return NULL;
     vma_region_t *region = pagemap->vma_head->next;
     if (region == pagemap->vma_head) {
         LOG_ERROR("Critical VMA error: No new alloc hint.\n");
@@ -188,8 +191,26 @@ void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
             break;
         }
     }
+    return addr;
+}
+
+void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
+    // Look for the first fit on the list.
+    if (!page_count) return NULL;
+    uint64_t addr = vmm_internal_alloc(pagemap, page_count, user);
     for (int i = 0; i < page_count; i++) {
-        vmm_map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)pmm_request(), flags);
+        vmm_map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)pmm_request(),
+            MM_READ | MM_WRITE | (user ? MM_USER : 0));
+    }
+    return (void*)addr;
+}
+
+void *vmm_alloc_to(pagemap_t *pagemap, uint64_t paddr, uint64_t page_count, bool user) {
+    if (!page_count) return NULL;
+    uint64_t addr = vmm_internal_alloc(pagemap, page_count, user);
+    for (int i = 0; i < page_count; i++) {
+        vmm_map(pagemap, addr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE),
+            MM_READ | MM_WRITE | (user ? MM_USER : 0));
     }
     return (void*)addr;
 }

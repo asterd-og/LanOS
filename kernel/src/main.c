@@ -68,6 +68,8 @@ void _putchar(char c) {
 
 void kernel_task(void);
 
+struct limine_framebuffer_response *framebuffer_response;
+
 void kmain() {
     if (LIMINE_BASE_REVISION_SUPPORTED == false) {
         hcf();
@@ -80,7 +82,8 @@ void kmain() {
         hcf();
     }
 
-    struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
+    framebuffer_response = framebuffer_request.response;
+    struct limine_framebuffer *framebuffer = framebuffer_response->framebuffers[0];
 
     flanterm_ctx = flanterm_fb_init(
         NULL,
@@ -102,10 +105,6 @@ void kmain() {
     gdt_init(0);
     idt_init();
     pmm_init();
-
-    void* stack = HIGHER_HALF((void*)((uint64_t)pmm_request() + PAGE_SIZE));
-    tss_set_rsp(0, 0, stack);
-
     vmm_init();
     slab_init();
     acpi_init();
@@ -122,9 +121,11 @@ void kmain() {
     sched_init();
     dev_init();
     syscall_init();
-    vnode_t *node = vfs_open("A:/main");
-    sched_load_elf(0, node);
-    vfs_close(node);
+
+    vnode_t *init = vfs_open("A:/init");
+    sched_load_elf(0, init);
+    vfs_close(init);
+
     sched_new_task(0, kernel_task);
     lapic_ipi_all(0, SCHED_VEC);
 
@@ -132,7 +133,6 @@ void kmain() {
 }
 
 void kernel_task(void) {
-    printf("\x1b[36mLanOS\x1b[37m Booted successfully!\n");
     while (1) {
     }
 }

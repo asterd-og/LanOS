@@ -36,6 +36,8 @@
 #include <stdio.h>
 #include <spinlock.h>
 
+#define PRINTF_DISABLE_SUPPORT_FLOAT
+
 NEW_LOCK(printf_lock);
 
 // define this globally (e.g. gcc -DPRINTF_INCLUDE_CONFIG_H ...) to include the

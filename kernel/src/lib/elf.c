@@ -33,6 +33,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
                 max_vaddr = end;
         }
     }
+
     vmm_switch_pagemap(kernel_pagemap);
     max_vaddr += PAGE_SIZE;
 

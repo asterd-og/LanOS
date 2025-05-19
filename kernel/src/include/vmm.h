@@ -37,11 +37,12 @@ void vmm_init();
 void vmm_map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 uint64_t vmm_get_phys(pagemap_t *pagemap, uint64_t vaddr);
 void vmm_map_range(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count);
-void vmm_switch_pagemap(pagemap_t *pagemap);
+pagemap_t *vmm_switch_pagemap(pagemap_t *pagemap);
 pagemap_t *vmm_new_pagemap();
 
 vma_region_t *vma_add_region(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
 vma_region_t *vma_insert_region(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags);
 
 void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user);
+void *vmm_alloc_to(pagemap_t *pagemap, uint64_t paddr, uint64_t page_count, bool user);
 void vmm_free(pagemap_t *pagemap, void *ptr, uint64_t page_count);

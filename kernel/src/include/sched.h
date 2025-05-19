@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <idt.h>
 #include <vmm.h>
 #include <vfs.h>
@@ -12,9 +13,12 @@
 typedef struct task_t {
     uint64_t id;
     uint32_t cpu_num;
-    uint64_t stack_top;
+    uint64_t kernel_stack;
+    uint64_t kernel_rsp;
+    uint64_t stack;
     context_t ctx;
     pagemap_t *pagemap;
+    bool user;
     struct task_t *next;
     struct task_t *prev;
     vnode_t *handles[128];
