@@ -1,8 +1,8 @@
-#include "vmm.h"
 #include <elf.h>
 #include <pmm.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     elf_hdr_t *hdr = (elf_hdr_t*)data;
@@ -37,7 +37,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     vmm_switch_pagemap(kernel_pagemap);
     max_vaddr += PAGE_SIZE;
 
-    vma_add_region(pagemap, max_vaddr, 1, MM_READ | MM_WRITE | MM_USER);
+    vma_set_start(pagemap, max_vaddr, 1);
 
     return hdr->entry;
 }

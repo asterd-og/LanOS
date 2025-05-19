@@ -98,13 +98,13 @@ void syscall_spawn_process(context_t *ctx) {
     task_t *task = this_task();
     if (task->handle_count <= handle || !task->handles[handle]) return;
     if (task->handles[handle]->type != FS_FILE) return;
+    int argc = ctx->rsi;
+    char **argv = (char**)ctx->rdx;
     // TODO: Pick a random CPU to spawn the elf.
-    ctx->rax = sched_load_elf(1, task->handles[handle])->id;
+    ctx->rax = sched_load_elf(1, task->handles[handle], argc, argv)->id;
 }
 
-#define SYSCALL_COUNT 12
-
-void *syscall_handler_table[SYSCALL_COUNT] = {
+void *syscall_handler_table[] = {
     syscall_get_device_handle,
     syscall_open_file_handle,
     syscall_read_handle,
@@ -120,7 +120,7 @@ void *syscall_handler_table[SYSCALL_COUNT] = {
 };
 
 void syscall_handler(context_t *ctx) {
-    if (ctx->rax > SYSCALL_COUNT) {
+    if (ctx->rax > sizeof(syscall_handler_table) / sizeof(uint64_t)) {
         printf("Unhandled syscall.\n");
         return;
     }

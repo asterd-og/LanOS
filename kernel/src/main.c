@@ -123,16 +123,11 @@ void kmain() {
     syscall_init();
 
     vnode_t *init = vfs_open("A:/init");
-    sched_load_elf(0, init);
+    char *argv[] = {"init"};
+    sched_load_elf(0, init, 1, argv);
     vfs_close(init);
 
-    sched_new_task(0, kernel_task);
     lapic_ipi_all(0, SCHED_VEC);
 
     hcf();
-}
-
-void kernel_task(void) {
-    while (1) {
-    }
 }

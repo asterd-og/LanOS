@@ -28,6 +28,6 @@ typedef struct task_t {
 void sched_init();
 void sched_install();
 task_t *sched_new_task(uint32_t cpu, void *entry);
-task_t *sched_load_elf(uint32_t cpu, vnode_t *node);
+task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node, int argc, char *argv[]);
 void sched_switch(context_t *ctx);
 task_t *this_task();

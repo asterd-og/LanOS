@@ -110,7 +110,7 @@ void *slab_realloc(void *ptr, size_t size) {
     if (page->magic != SLAB_MAGIC) {
         slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
         if (obj->magic != SLAB_MAGIC) {
-            LOG_ERROR("Critical SLAB error: Trying to reallocate invalid ptr %d %x %x %p.\n");
+            LOG_ERROR("Critical SLAB error: Trying to reallocate invalid ptr.\n");
             ASSERT(0);
             return NULL;
         }
@@ -141,8 +141,7 @@ void slab_free(void *ptr) {
         spinlock_free(&heap_lock);
         return;
     }
-    uint64_t page_count = page->page_count;
-    vmm_free(kernel_pagemap, page, page_count);
+    vmm_free(kernel_pagemap, page);
     spinlock_free(&heap_lock);
 }
 

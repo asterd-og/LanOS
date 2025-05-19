@@ -203,7 +203,7 @@ void f32_mount(vnode_t *node, ahci_port_t *port) {
     f32_ebpb_t *ebpb = (f32_ebpb_t*)bpb->ext_bpb;
 
     size_t cluster_size = bpb->sectors_per_cluster * 512;
-    vmm_free(kernel_pagemap, info->disk_buf, 1);
+    vmm_free(kernel_pagemap, info->disk_buf);
     info->disk_buf = vmm_alloc(kernel_pagemap, DIV_ROUND_UP(cluster_size, PAGE_SIZE), false);
 
     f32_fsinfo_t *fsinfo = (f32_fsinfo_t*)kmalloc(sizeof(f32_fsinfo_t));

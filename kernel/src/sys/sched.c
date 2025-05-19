@@ -45,7 +45,7 @@ task_t *sched_new_task(uint32_t cpu_num, void *entry) {
     task->pagemap = vmm_new_pagemap();
     task->user = false;
 
-    vma_add_region(task->pagemap, 0, 1, MM_READ | MM_WRITE | MM_USER);
+    vma_set_start(task->pagemap, 0, 1);
 
     cpu_t *cpu = get_cpu(cpu_num);
     if (cpu->task_idle == NULL) {
@@ -63,7 +63,7 @@ task_t *sched_new_task(uint32_t cpu_num, void *entry) {
     return task;
 }
 
-task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node) {
+task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node, int argc, char *argv[]) {
     pagemap_t *old_pagemap = vmm_switch_pagemap(kernel_pagemap);
     task_t *task = (task_t*)kmalloc(sizeof(task_t));
     uint8_t *buffer = (uint8_t*)kmalloc(node->size);
@@ -80,6 +80,24 @@ task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node) {
     memset((void*)stack, 0, PAGE_SIZE);
     vmm_switch_pagemap(old_pagemap);
 
+    char **kernel_argv = (char**)kmalloc(argc * 8);
+    for (int i = 0; i < argc; i++) {
+        kernel_argv[i] = (char*)kmalloc(strlen(argv[i]) + 1);
+        memcpy(kernel_argv[i], argv[i], strlen(argv[i]) + 1);
+    }
+
+    char **user_argv = (char**)vmm_alloc(task->pagemap, DIV_ROUND_UP(argc * 8, PAGE_SIZE), true);
+    vmm_switch_pagemap(task->pagemap);
+    for (int i = 0; i < argc; i++) {
+        user_argv[i] = (char*)vmm_alloc(task->pagemap, DIV_ROUND_UP(strlen(kernel_argv[i]) + 1, PAGE_SIZE), true);
+        memcpy(user_argv[i], kernel_argv[i], strlen(kernel_argv[i]) + 1);
+    }
+    vmm_switch_pagemap(old_pagemap);
+
+    for (int i = 0; i < argc; i++)
+        vmm_free(kernel_pagemap, kernel_argv[i]);
+    vmm_free(kernel_pagemap, kernel_argv);
+
     uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 2, false);
     memset((void*)kernel_stack, 0, PAGE_SIZE);
 
@@ -88,6 +106,8 @@ task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node) {
 
     kfree(buffer);
     task->ctx.rsp = stack + (PAGE_SIZE * 8);
+    task->ctx.rdi = argc;
+    task->ctx.rsi = (uint64_t)user_argv;
     task->ctx.cs = 0x1b; // 0x18 | 3
     task->ctx.ss = 0x23; // 0x20 | 3
     task->ctx.rflags = 0x202;
