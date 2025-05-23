@@ -47,12 +47,12 @@ void vfs_close(vnode_t *node) {
 }
 
 size_t vfs_read(vnode_t *node, uint8_t *buffer, size_t len) {
-    if (node->type != FS_FILE && node->type != FS_DEV) return 0;
+    if (node->type != FS_FILE && node->type != FS_DEV && node->type != FS_IPC) return 0;
     return node->read(node, buffer, len);
 }
 
 size_t vfs_write(vnode_t *node, uint8_t *buffer, size_t len) {
-    if (node->type != FS_FILE && node->type != FS_DEV) return 0;
+    if (node->type != FS_FILE && node->type != FS_DEV && node->type != FS_IPC) return 0;
     return node->write(node, buffer, len);
 }
 

@@ -7,18 +7,18 @@
 typedef struct {
     unsigned char ident[16];
     uint16_t type;
-    uint16_t isa;
-    uint32_t elf_version;
+    uint16_t machine;
+    uint32_t version;
     uint64_t entry;
     uint64_t phoff;
     uint64_t shoff;
     uint32_t flags;
-    uint16_t hdr_size;
-    uint16_t entry_ph_size;
-    uint16_t entry_ph_count;
-    uint16_t entry_sh_size;
-    uint16_t entry_sh_count;
-    uint16_t sh_names;
+    uint16_t ehsize;
+    uint16_t phentsize;
+    uint16_t phnum;
+    uint16_t shentsize;
+    uint16_t shnum;
+    uint16_t shstrndx;
 } elf_hdr_t;
 
 typedef struct {
@@ -27,8 +27,8 @@ typedef struct {
     uint64_t offset;
     uint64_t vaddr;
     uint64_t paddr;
-    uint64_t file_size;
-    uint64_t mem_size;
+    uint64_t filesz;
+    uint64_t memsz;
     uint64_t align;
 } elf_phdr_t;
 
@@ -41,8 +41,8 @@ typedef struct {
     uint64_t size;
     uint32_t link;
     uint32_t info;
-    uint64_t align;
-    uint64_t ent_size;
+    uint64_t addralign;
+    uint64_t entsize;
 } elf_shdr_t;
 
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);

@@ -107,6 +107,7 @@ void *slab_realloc(void *ptr, size_t size) {
     if (!ptr) return slab_alloc(size);
     uint64_t old_size = 0;
     slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
+    uint64_t dbg = (uint64_t)page;
     if (page->magic != SLAB_MAGIC) {
         slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
         if (obj->magic != SLAB_MAGIC) {
@@ -115,8 +116,9 @@ void *slab_realloc(void *ptr, size_t size) {
             return NULL;
         }
         old_size = obj->cache->obj_size;
+        dbg = (uint64_t)obj;
     } else {
-        old_size = page->page_count * PAGE_SIZE;
+        old_size = page->page_count * PAGE_SIZE - sizeof(slab_page_t);
     }
     void *new_ptr = slab_alloc(size);
     memcpy(new_ptr, ptr, (old_size > size ? size : old_size));

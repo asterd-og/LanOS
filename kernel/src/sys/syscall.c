@@ -55,31 +55,46 @@ void syscall_close_handle(context_t *ctx) {
     task->handles[handle] = NULL;
 }
 
-void syscall_ipc_create_ep(context_t *ctx) {
-    char *name = (char*)ctx->rdi;
-    ctx->rax = ipc_create_ep(name);
+// Returns the handle of the server.
+void syscall_ipc_create_server(context_t *ctx) {
+    const char *name = (const char*)ctx->rdi;
+    vnode_t *node = ipc_create_server(name);
+    task_t *task = this_task();
+    task->handles[task->handle_count++] = node;
+    ctx->rax = task->handle_count - 1;
 }
 
-void syscall_ipc_find_ep(context_t *ctx) {
-    char *name = (char*)ctx->rdi;
-    ctx->rax = ipc_find_ep(name);
+// Returns the handle of the client.
+void syscall_ipc_create_client(context_t *ctx) {
+    vnode_t *node = ipc_create_client();
+    task_t *task = this_task();
+    task->handles[task->handle_count++] = node;
+    ctx->rax = task->handle_count - 1;
 }
 
-void syscall_ipc_send(context_t *ctx) {
-    int16_t ipc = (int16_t)ctx->rdi;
-    uint8_t *buffer = (uint8_t*)ctx->rsi;
-    size_t len = ctx->rdx;
-    ipc_send(buffer, len, ipc);
+// Returns whether or not it was a successful (0) or unsuccessful (-1) connection. (blocking)
+void syscall_ipc_connect(context_t *ctx) {
+    uint64_t handle = ctx->rdi;
+    const char *name = (const char*)ctx->rsi;
+    task_t *task = this_task();
+    if (task->handle_count <= handle || !task->handles[handle]) return;
+    vnode_t *node = task->handles[handle];
+    ctx->rax = ipc_connect(node, name);
 }
 
-void syscall_ipc_recv(context_t *ctx) {
-    int16_t ipc = (int16_t)ctx->rdi;
-    uint8_t *buffer = (uint8_t*)ctx->rsi;
-    size_t len = ctx->rdx;
-    ipc_recv(buffer, len, ipc);
+// Returns the handle of the client connected. (blocking)
+void syscall_ipc_accept(context_t *ctx) {
+    uint64_t server_handle = ctx->rdi;
+    task_t *task = this_task();
+    if (task->handle_count <= server_handle || !task->handles[server_handle]) return;
+    vnode_t *server_node = task->handles[server_handle];
+    vnode_t *client_node = ipc_accept(server_node);
+    task->handles[task->handle_count++] = client_node;
+    ctx->rax = task->handle_count - 1;
 }
 
 void syscall_ipc_close(context_t *ctx) {
+    //
 }
 
 void syscall_map_device_handle(context_t *ctx) {
@@ -110,10 +125,10 @@ void *syscall_handler_table[] = {
     syscall_read_handle,
     syscall_write_handle,
     syscall_close_handle,
-    syscall_ipc_create_ep,
-    syscall_ipc_find_ep,
-    syscall_ipc_send,
-    syscall_ipc_recv,
+    syscall_ipc_create_server,
+    syscall_ipc_create_client,
+    syscall_ipc_connect,
+    syscall_ipc_accept,
     syscall_ipc_close,
     syscall_map_device_handle,
     syscall_spawn_process

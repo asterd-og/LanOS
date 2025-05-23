@@ -7,6 +7,7 @@
 #define FS_FILE 0x1
 #define FS_DIR  0x2
 #define FS_DEV  0x4
+#define FS_IPC  0x8
 
 typedef struct vnode_t {
     int type;

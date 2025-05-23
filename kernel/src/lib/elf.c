@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdio.h>
 
+uint64_t elf_load_driver() {
+}
+
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     elf_hdr_t *hdr = (elf_hdr_t*)data;
 
@@ -18,17 +21,20 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
 
     vmm_switch_pagemap(pagemap);
 
-    for (int i = 0; i < hdr->entry_ph_count; i++) {
-        phdr = (elf_phdr_t*)(data + hdr->phoff + (i * sizeof(elf_phdr_t)));
+    for (int i = 0; i < hdr->phnum; i++) {
+        phdr = (elf_phdr_t*)(data + hdr->phoff + (i * hdr->phentsize));
         if (phdr->type == 1) {
             // Load this segment into memory at the correct virtual address
             uint64_t start = ALIGN_DOWN(phdr->vaddr, PAGE_SIZE);
-            uint64_t end = ALIGN_UP(phdr->vaddr + phdr->mem_size, PAGE_SIZE);
+            uint64_t end = ALIGN_UP(phdr->vaddr + phdr->memsz, PAGE_SIZE);
+            uint64_t flags = MM_READ | MM_WRITE | MM_USER; // TODO
             for (uint64_t i = start; i < end; i += PAGE_SIZE) {
                 uint64_t page = (uint64_t)pmm_request();
-                vmm_map(pagemap, i, page, MM_READ | MM_WRITE | MM_USER);
+                vmm_map(pagemap, i, page, flags);
             }
-            memcpy((void*)start, (void*)(data + phdr->offset), phdr->file_size);
+            memcpy((void*)phdr->vaddr, (void*)(data + phdr->offset), phdr->filesz);
+            if (phdr->memsz > phdr->filesz)
+                memset((void*)(phdr->vaddr + phdr->filesz), 0, phdr->memsz - phdr->filesz); // Zero out BSS
             if (end > max_vaddr)
                 max_vaddr = end;
         }
@@ -37,6 +43,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     vmm_switch_pagemap(kernel_pagemap);
     max_vaddr += PAGE_SIZE;
 
+    // Sets the start of the VMA, the first free region to start allocating.
     vma_set_start(pagemap, max_vaddr, 1);
 
     return hdr->entry;
