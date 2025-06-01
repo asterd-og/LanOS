@@ -7,7 +7,7 @@
 #include <vmm.h>
 #include <vfs.h>
 
-#define TASK_QUANTUM 25
+#define TASK_QUANTUM 5
 #define SCHED_VEC 48
 
 typedef struct task_t {
@@ -27,7 +27,8 @@ typedef struct task_t {
 
 void sched_init();
 void sched_install();
-task_t *sched_new_task(uint32_t cpu, void *entry);
+task_t *sched_new_task(uint32_t cpu_num, void *entry);
 task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node, int argc, char *argv[]);
+task_t *sched_branch(uint32_t cpu_num, task_t *parent, void *entry, void *arg);
 void sched_switch(context_t *ctx);
 task_t *this_task();

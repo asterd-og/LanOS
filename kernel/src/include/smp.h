@@ -14,8 +14,10 @@ typedef struct {
     pagemap_t *pagemap;
     task_t *task_idle;
     task_t *current_task;
+    uint64_t task_count;
 } cpu_t;
 
+extern int smp_last_cpu;
 extern cpu_t *smp_cpu_list[MAX_CPU];
 extern bool smp_started;
 

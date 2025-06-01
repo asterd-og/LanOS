@@ -1,4 +1,3 @@
-#include "vmm.h"
 #include <syscall.h>
 #include <devices.h>
 #include <vfs.h>
@@ -8,6 +7,7 @@
 #include <sched.h>
 #include <ipc.h>
 #include <spinlock.h>
+#include <smp.h>
 
 // Argument order: rdi, rsi, rdx, rcx, r8 and r9
 
@@ -108,6 +108,20 @@ void syscall_map_device_handle(context_t *ctx) {
     ctx->rax = virt_addr;
 }
 
+cpu_t *get_optimal_cpu() {
+    cpu_t *cpu = NULL;
+    for (int i = 1; i < smp_last_cpu; i++) {
+        if (smp_cpu_list[i] == NULL) continue;
+        if (!cpu) {
+            cpu = smp_cpu_list[i];
+            continue;
+        }
+        if (smp_cpu_list[i]->task_count < cpu->task_count)
+            cpu = smp_cpu_list[i];
+    }
+    return cpu;
+}
+
 void syscall_spawn_process(context_t *ctx) {
     uint64_t handle = ctx->rdi;
     task_t *task = this_task();
@@ -115,8 +129,13 @@ void syscall_spawn_process(context_t *ctx) {
     if (task->handles[handle]->type != FS_FILE) return;
     int argc = ctx->rsi;
     char **argv = (char**)ctx->rdx;
-    // TODO: Pick a random CPU to spawn the elf.
-    ctx->rax = sched_load_elf(1, task->handles[handle], argc, argv)->id;
+    ctx->rax = sched_load_elf(get_optimal_cpu()->id, task->handles[handle], argc, argv)->id;
+}
+
+void syscall_branch_process(context_t *ctx) {
+    void *entry = (void*)ctx->rdi;
+    void *arg = (void*)ctx->rsi;
+    ctx->rax = sched_branch(get_optimal_cpu()->id, this_task(), entry, arg)->id;
 }
 
 void *syscall_handler_table[] = {
@@ -131,7 +150,8 @@ void *syscall_handler_table[] = {
     syscall_ipc_accept,
     syscall_ipc_close,
     syscall_map_device_handle,
-    syscall_spawn_process
+    syscall_spawn_process,
+    syscall_branch_process
 };
 
 void syscall_handler(context_t *ctx) {

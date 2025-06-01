@@ -2,10 +2,6 @@
 #include <pmm.h>
 #include <stdint.h>
 #include <string.h>
-#include <stdio.h>
-
-uint64_t elf_load_driver() {
-}
 
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     elf_hdr_t *hdr = (elf_hdr_t*)data;
@@ -16,13 +12,13 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     if (hdr->type != 2)
         return 0;
 
-    elf_phdr_t *phdr;
+    elf_phdr_t *phdrs = (elf_phdr_t*)(data + hdr->phoff);
     uint64_t max_vaddr = 0;
 
     vmm_switch_pagemap(pagemap);
 
     for (int i = 0; i < hdr->phnum; i++) {
-        phdr = (elf_phdr_t*)(data + hdr->phoff + (i * hdr->phentsize));
+        elf_phdr_t *phdr = &phdrs[i];
         if (phdr->type == 1) {
             // Load this segment into memory at the correct virtual address
             uint64_t start = ALIGN_DOWN(phdr->vaddr, PAGE_SIZE);

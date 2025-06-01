@@ -1,3 +1,4 @@
+#include "spinlock.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -25,6 +26,8 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <devices.h>
+#include <driver.h>
+#include <ports.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -122,12 +125,41 @@ void kmain() {
     dev_init();
     syscall_init();
 
+    vnode_t *kb_node = vfs_open("A:/ps2kb.o");
+    driver_load_node(kb_node);
+    LOG_OK("PS/2 Keyboard driver loaded.\n");
+    vnode_t *mouse_node = vfs_open("A:/ps2mouse.o");
+    driver_load_node(mouse_node);
+    LOG_OK("PS/2 Mouse driver loaded.\n");
+
     vnode_t *init = vfs_open("A:/init");
     char *argv[] = {"init"};
-    sched_load_elf(0, init, 1, argv);
+    sched_load_elf(2, init, 1, argv);
     vfs_close(init);
 
     lapic_ipi_all(0, SCHED_VEC);
 
     hcf();
+}
+
+kernel_sym_t kernel_sym_table[] ={
+    {"printf_", printf},
+    {"idt_install_irq", idt_install_irq},
+    {"lapic_eoi", lapic_eoi},
+    {"memset", memset},
+    {"memcpy", memcpy},
+    {"kmalloc", kmalloc},
+    {"krealloc", krealloc},
+    {"kfree", kfree},
+    {"spinlock_lock", spinlock_lock},
+    {"spinlock_free", spinlock_free},
+    {"dev_new", dev_new},
+};
+
+uint64_t kernel_find_sym(const char *name) {
+    for (int i = 0; i < sizeof(kernel_sym_table) / sizeof(kernel_sym_t); i++) {
+        if (!strcmp(name, kernel_sym_table[i].name))
+            return (uint64_t)kernel_sym_table[i].addr;
+    }
+    return 0;
 }

@@ -7,7 +7,7 @@
 #include <serial.h>
 
 dev_t *devices[128];
-int dev_count = 2;
+int dev_count = 0;
 
 size_t con_write(vnode_t *node, uint8_t *buffer, size_t len) {
     return printf("%.*s", len, buffer);
@@ -25,12 +25,12 @@ size_t fb_read(vnode_t *node, uint8_t *buffer, size_t len) {
 
 void dev_init() {
     // Initialize con device (console) and fb device (framebuffer)
-    devices[0] = dev_new("CON", NULL, con_write);
-    devices[1] = dev_new("FB0", fb_read, NULL);
+    dev_new("CON", NULL, con_write);
+    dev_t *fb_dev = dev_new("FB0", fb_read, NULL);
     struct limine_framebuffer *fb = framebuffer_response->framebuffers[0];
-    devices[1]->node->data = fb;
-    devices[1]->map_info.start_addr = (uint64_t)fb->address;
-    devices[1]->map_info.page_count = DIV_ROUND_UP(fb->width * fb->height * (fb->bpp / 4), PAGE_SIZE);
+    fb_dev->node->data = fb;
+    fb_dev->map_info.start_addr = (uint64_t)fb->address;
+    fb_dev->map_info.page_count = DIV_ROUND_UP(fb->width * fb->height * (fb->bpp / 4), PAGE_SIZE);
 }
 
 dev_t *dev_new(const char *name, void *read, void *write) {
@@ -48,6 +48,7 @@ dev_t *dev_new(const char *name, void *read, void *write) {
     dev_node->write = write;
     dev_node->mnt_info = dev;
     dev->node = dev_node;
+    devices[dev_count++] = dev;
     return dev;
 }
 

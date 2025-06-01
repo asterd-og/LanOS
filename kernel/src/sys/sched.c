@@ -28,6 +28,21 @@ void sched_install() {
     this_cpu()->current_task = NULL;
 }
 
+void sched_add_task(cpu_t *cpu, task_t *task) {
+    cpu->task_count++;
+    if (cpu->task_idle == NULL) {
+        task->next = task;
+        task->prev = task;
+        cpu->task_idle = task;
+        return;
+    }
+
+    task->next = cpu->task_idle;
+    task->prev = cpu->task_idle->prev;
+    cpu->task_idle->prev->next = task;
+    cpu->task_idle->prev = task;
+}
+
 task_t *sched_new_task(uint32_t cpu_num, void *entry) {
     task_t *task = (task_t*)kmalloc(sizeof(task_t));
 
@@ -47,18 +62,7 @@ task_t *sched_new_task(uint32_t cpu_num, void *entry) {
 
     vma_set_start(task->pagemap, 0, 1);
 
-    cpu_t *cpu = get_cpu(cpu_num);
-    if (cpu->task_idle == NULL) {
-        task->next = task;
-        task->prev = task;
-        cpu->task_idle = task;
-        return task;
-    }
-
-    task->next = cpu->task_idle;
-    task->prev = cpu->task_idle->prev;
-    cpu->task_idle->prev->next = task;
-    cpu->task_idle->prev = task;
+    sched_add_task(get_cpu(cpu_num), task);
 
     return task;
 }
@@ -115,18 +119,45 @@ task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node, int argc, char *argv[]) 
     task->handle_count = 0;
     task->user = true;
 
-    cpu_t *cpu = get_cpu(cpu_num);
-    if (cpu->task_idle == NULL) {
-        task->next = task;
-        task->prev = task;
-        cpu->task_idle = task;
-        return task;
-    }
+    sched_add_task(get_cpu(cpu_num), task);
 
-    task->next = cpu->task_idle;
-    task->prev = cpu->task_idle->prev;
-    cpu->task_idle->prev->next = task;
-    cpu->task_idle->prev = task;
+    return task;
+}
+
+task_t *sched_branch(uint32_t cpu_num, task_t *parent, void *entry, void *arg) {
+    pagemap_t *old_pagemap = vmm_switch_pagemap(kernel_pagemap);
+    task_t *task = (task_t*)kmalloc(sizeof(task_t));
+
+    task->id = current_id++;
+    task->cpu_num = cpu_num;
+    task->pagemap = parent->pagemap;
+
+    task->ctx.rip = (uint64_t)entry;
+
+    uint64_t stack = (uint64_t)vmm_alloc(task->pagemap, 8, true);
+    vmm_switch_pagemap(task->pagemap);
+    memset((void*)stack, 0, PAGE_SIZE);
+    vmm_switch_pagemap(old_pagemap);
+
+    uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 2, false);
+    memset((void*)kernel_stack, 0, PAGE_SIZE);
+
+    task->kernel_stack = kernel_stack;
+    task->kernel_rsp = kernel_stack + (PAGE_SIZE * 2);
+
+    task->ctx.rsp = stack + (PAGE_SIZE * 8);
+    task->ctx.rdi = (uint64_t)arg;
+    task->ctx.cs = 0x1b; // 0x18 | 3
+    task->ctx.ss = 0x23; // 0x20 | 3
+    task->ctx.rflags = 0x202;
+    task->stack = stack;
+    for (int i = 0; i < parent->handle_count; i++) {
+        task->handles[i] = parent->handles[i];
+    }
+    task->handle_count = parent->handle_count;
+    task->user = true;
+
+    sched_add_task(get_cpu(cpu_num), task);
 
     return task;
 }

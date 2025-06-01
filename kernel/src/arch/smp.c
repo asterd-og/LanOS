@@ -21,6 +21,7 @@ cpu_t *smp_cpu_list[MAX_CPU];
 NEW_LOCK(smp_lock);
 uint64_t started_count = 0;
 bool smp_started = false;
+int smp_last_cpu = 0;
 
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     vmm_switch_pagemap(kernel_pagemap);
@@ -32,9 +33,11 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     smp_cpu_list[mp_info->lapic_id]->lapic_ticks = lapic_init_timer();
     smp_cpu_list[mp_info->lapic_id]->task_idle = NULL;
     smp_cpu_list[mp_info->lapic_id]->pagemap = kernel_pagemap;
+    smp_cpu_list[mp_info->lapic_id]->task_count = 0;
     sched_install();
     LOG_OK("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
+    if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;
     spinlock_free(&smp_lock);
     while (1)
         __asm__ volatile ("hlt");
