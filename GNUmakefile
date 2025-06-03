@@ -15,7 +15,7 @@ QEMUFLAGS := -debugcon stdio -m 2G -no-reboot -no-shutdown -smp $(shell nproc) \
 			-device ide-hd,drive=disk,bus=ahci.4
 
 ifeq ($(OSNAME), Darwin)
-	QEMUFLAGS += -accel hvf
+	QEMUFLAGS += -machine accel=hvf
 endif
 ifeq ($(OSNAME), Linux)
 	QEMUFLAGS += -enable-kvm

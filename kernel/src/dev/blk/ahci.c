@@ -1,4 +1,3 @@
-#include "smp.h"
 #include <ahci.h>
 #include <pci.h>
 #include <log.h>
@@ -7,6 +6,9 @@
 #include <heap.h>
 #include <string.h>
 #include <math.h>
+#include <smp.h>
+#include <assert.h>
+#include <serial.h>
 
 ahci_port_t *ahci_ports[32];
 int connected_ports = 0;
@@ -34,7 +36,7 @@ ahci_port_t *ahci_init_disk(hba_port_t *port, int port_num) {
 
     hba_cmd_header_t *cmd_hdr = (hba_cmd_header_t*)clb;
     for (int i = 0; i < 32; i++) {
-        cmd_hdr[i].prdtl = 8;
+        cmd_hdr[i].prdtl = PAGE_SIZE / sizeof(hba_prdte_t);
         void *cmd_tbl = HIGHER_HALF(pmm_request());
         uint64_t cmd_tbl_phys = PHYSICAL((uint64_t)cmd_tbl);
         cmd_hdr[i].ctba_low = LOW(cmd_tbl_phys);
@@ -79,6 +81,7 @@ void ahci_send_cmd(hba_port_t *port, uint32_t slot) {
 
 // Buffer should be the virtual address
 int ahci_op(ahci_port_t *ahci_port, uint64_t lba, uint32_t count, char *buffer, bool w) {
+    ASSERT(count > 0);
     hba_port_t *port = ahci_port->port;
     port->is = (uint32_t)-1;
     int slot = ahci_find_slot(port);

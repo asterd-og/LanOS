@@ -1,4 +1,3 @@
-#include "spinlock.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -28,6 +27,7 @@
 #include <devices.h>
 #include <driver.h>
 #include <ports.h>
+#include <spinlock.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -88,6 +88,9 @@ void kmain() {
     framebuffer_response = framebuffer_request.response;
     struct limine_framebuffer *framebuffer = framebuffer_response->framebuffers[0];
 
+    uint32_t default_bg = 0xFF000000;
+    uint32_t default_fg = 0xFFFFFFFF;
+
     flanterm_ctx = flanterm_fb_init(
         NULL,
         NULL,
@@ -98,7 +101,7 @@ void kmain() {
         framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
         NULL,
         NULL, NULL,
-        NULL, NULL,
+        &default_bg, &default_fg,
         NULL, NULL,
         NULL, 0, 0, 1,
         0, 0,
@@ -134,7 +137,7 @@ void kmain() {
 
     vnode_t *init = vfs_open("A:/init");
     char *argv[] = {"init"};
-    sched_load_elf(2, init, 1, argv);
+    sched_load_elf(1, init, 1, argv);
     vfs_close(init);
 
     lapic_ipi_all(0, SCHED_VEC);
