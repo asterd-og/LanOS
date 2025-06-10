@@ -31,10 +31,12 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     smp_cpu_list[mp_info->lapic_id]->id = mp_info->lapic_id;
     lapic_init();
     smp_cpu_list[mp_info->lapic_id]->lapic_ticks = lapic_init_timer();
-    smp_cpu_list[mp_info->lapic_id]->task_idle = NULL;
     smp_cpu_list[mp_info->lapic_id]->pagemap = kernel_pagemap;
-    smp_cpu_list[mp_info->lapic_id]->task_count = 0;
-    sched_install();
+    smp_cpu_list[mp_info->lapic_id]->thread_count = 0;
+    smp_cpu_list[mp_info->lapic_id]->thread_head = NULL;
+    smp_cpu_list[mp_info->lapic_id]->sched_lock = 0;
+    smp_cpu_list[mp_info->lapic_id]->has_runnable_thread = false;
+    cpu_enable_sse();
     LOG_OK("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
     if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;
@@ -53,8 +55,12 @@ void smp_init() {
     bsp_cpu->id = mp_response->bsp_lapic_id;
     bsp_cpu->pagemap = kernel_pagemap;
     bsp_cpu->lapic_ticks = lapic_init_timer();
-    bsp_cpu->task_idle = NULL;
+    bsp_cpu->thread_count = 0;
+    bsp_cpu->thread_head = NULL;
+    bsp_cpu->sched_lock = 0;
+    bsp_cpu->has_runnable_thread = false;
     smp_cpu_list[bsp_cpu->id] = bsp_cpu;
+    cpu_enable_sse();
     LOG_INFO("Detected %zu CPUs.\n", mp_response->cpu_count);
     for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
         struct limine_mp_info *mp_info = mp_response->cpus[i];

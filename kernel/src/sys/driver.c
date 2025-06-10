@@ -102,7 +102,7 @@ void driver_load(uint8_t *elf) {
 
 void driver_load_node(vnode_t *node) {
     uint8_t *buffer = (uint8_t*)kmalloc(node->size);
-    vfs_read(node, buffer, node->size);
+    vfs_read(node, buffer, 0, node->size);
     driver_load(buffer);
     kfree(buffer);
 }

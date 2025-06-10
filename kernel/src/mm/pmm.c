@@ -72,8 +72,17 @@ void *pmm_request() {
     // TODO: Handle when we can't find a free bit after bitmap_last_free
     // (reiterate through the bitmap, and if we dont find ANY frees, we panic.)
     uint64_t bit = bitmap_last_free;
-    while (bitmap_test(bit))
+    while (bit < pmm_bitmap_pages && bitmap_test(bit))
         bit++;
+    if (bit >= pmm_bitmap_pages) {
+        bit = 0;
+        while (bit < bitmap_last_free && bitmap_test(bit))
+            bit++;
+        if (bit == bitmap_last_free) {
+            LOG_ERROR("PMM Out of memory!\n");
+            return NULL;
+        }
+    }
     bitmap_set(bit);
     bitmap_last_free = bit;
     return (void*)(bit * PAGE_SIZE);

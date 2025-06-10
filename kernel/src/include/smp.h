@@ -12,9 +12,11 @@ typedef struct {
     uint32_t id;
     uint64_t lapic_ticks;
     pagemap_t *pagemap;
-    task_t *task_idle;
-    task_t *current_task;
-    uint64_t task_count;
+    thread_t *thread_head;
+    thread_t *current_thread;
+    uint64_t thread_count;
+    int sched_lock;
+    bool has_runnable_thread;
 } cpu_t;
 
 extern int smp_last_cpu;

@@ -23,7 +23,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
             // Load this segment into memory at the correct virtual address
             uint64_t start = ALIGN_DOWN(phdr->vaddr, PAGE_SIZE);
             uint64_t end = ALIGN_UP(phdr->vaddr + phdr->memsz, PAGE_SIZE);
-            uint64_t flags = MM_READ | MM_WRITE | MM_USER; // TODO
+            uint64_t flags = MM_READ | MM_WRITE | MM_USER;
             for (uint64_t i = start; i < end; i += PAGE_SIZE) {
                 uint64_t page = (uint64_t)pmm_request();
                 vmm_map(pagemap, i, page, flags);

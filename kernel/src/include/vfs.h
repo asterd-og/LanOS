@@ -6,27 +6,30 @@
 
 #define FS_FILE 0x1
 #define FS_DIR  0x2
-#define FS_DEV  0x4
-#define FS_IPC  0x8
 
 typedef struct vnode_t {
-    int type;
-    char name[256];
+    uint8_t type;
     uint32_t size;
-    size_t (*read)(struct vnode_t *node, uint8_t *buffer, size_t len);
-    size_t (*write)(struct vnode_t *node, uint8_t *buffer, size_t len);
-    char *(*read_dir)(struct vnode_t *node, uint32_t index);
-    struct vnode_t *(*find_dir)(struct vnode_t *node, char *name);
-    void *data;
+    uint32_t inode;
+    char name[256];
+    struct vnode_t *parent;
+    struct vnode_t *child;
+    struct vnode_t *next;
+    size_t (*read)(struct vnode_t *node, uint8_t *buffer, size_t off, size_t len);
+    size_t (*write)(struct vnode_t *node, uint8_t *buffer, size_t off, size_t len);
+    struct vnode_t *(*lookup)(struct vnode_t *node, const char *name);
+    void (*populate)(struct vnode_t *node);
     void *mnt_info;
 } vnode_t;
 
-char vfs_mount_disk(ahci_port_t *port);
-vnode_t *vfs_get_mount(char letter);
+extern vnode_t *root_node;
 
-vnode_t *vfs_open(char *path);
+void vfs_init();
+void vfs_add_node(vnode_t *parent, vnode_t *child);
+
+vnode_t *vfs_open(vnode_t *root, const char *path);
 void vfs_close(vnode_t *node);
-size_t vfs_read(vnode_t *node, uint8_t *buffer, size_t len);
-size_t vfs_write(vnode_t *node, uint8_t *buffer, size_t len);
-char *vfs_read_dir(vnode_t *node, uint32_t index);
-vnode_t *vfs_find_dir(vnode_t *node, char *name);
+size_t vfs_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len);
+size_t vfs_write(vnode_t *node, uint8_t *buffer, size_t off, size_t len);
+vnode_t *vfs_lookup(vnode_t *node, const char *name);
+void vfs_populate(vnode_t *node);

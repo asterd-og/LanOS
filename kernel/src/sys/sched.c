@@ -1,3 +1,4 @@
+#include "vfs.h"
 #include "vmm.h"
 #include <sched.h>
 #include <string.h>
@@ -5,180 +6,175 @@
 #include <heap.h>
 #include <smp.h>
 #include <pmm.h>
-#include <log.h>
 #include <elf.h>
 #include <gdt.h>
 #include <spinlock.h>
+#include <log.h>
 
-NEW_LOCK(sched_lock);
-
-uint64_t current_id = 0;
+uint64_t tid = 0;
+uint64_t pid = 0;
 
 void sched_init() {
     idt_install_irq(16, sched_switch);
 }
 
-void sched_idle() {
-    while (1) {
-    }
+proc_t *sched_new_proc() {
+    proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
+    proc->id = pid++;
+    proc->cwd = root_node;
+    proc->children = NULL;
+    proc->pagemap = vmm_new_pagemap();
+    memset(proc->fd_table, 0, 256 * 8);
+    proc->fd_table[0] = NULL; // TODO stdin
+    proc->fd_table[1] = fd_open("/dev/con", O_WRONLY);
+    proc->fd_table[2] = fd_open("/dev/con", O_WRONLY);
+    proc->fd_count = 3;
+    return proc;
 }
 
-void sched_install() {
-    task_t *task_idle = sched_new_task(this_cpu()->id, sched_idle);
-    this_cpu()->current_task = NULL;
-}
-
-void sched_add_task(cpu_t *cpu, task_t *task) {
-    cpu->task_count++;
-    if (cpu->task_idle == NULL) {
-        task->next = task;
-        task->prev = task;
-        cpu->task_idle = task;
+void sched_add_thread(cpu_t *cpu, thread_t *thread) {
+    spinlock_lock(&cpu->sched_lock);
+    cpu->thread_count++;
+    if (!cpu->thread_head) {
+        thread->next = thread;
+        thread->prev = thread;
+        cpu->thread_head = thread;
+        spinlock_free(&cpu->sched_lock);
         return;
     }
 
-    task->next = cpu->task_idle;
-    task->prev = cpu->task_idle->prev;
-    cpu->task_idle->prev->next = task;
-    cpu->task_idle->prev = task;
+    thread->next = cpu->thread_head;
+    thread->prev = cpu->thread_head->prev;
+    cpu->thread_head->prev->next = thread;
+    cpu->thread_head->prev = thread;
+    spinlock_free(&cpu->sched_lock);
 }
 
-task_t *sched_new_task(uint32_t cpu_num, void *entry) {
-    task_t *task = (task_t*)kmalloc(sizeof(task_t));
-
-    uint64_t stack = HIGHER_HALF((uint64_t)pmm_request());
-    memset((void*)stack, 0, 4096);
-
-    task->id = current_id++;
-    task->cpu_num = cpu_num;
-    task->stack = stack;
-    task->ctx.rip = (uint64_t)entry;
-    task->ctx.rsp = stack + PAGE_SIZE;
-    task->ctx.cs = 0x08;
-    task->ctx.ss = 0x10;
-    task->ctx.rflags = 0x202;
-    task->pagemap = vmm_new_pagemap();
-    task->user = false;
-
-    vma_set_start(task->pagemap, 0, 1);
-
-    sched_add_task(get_cpu(cpu_num), task);
-
-    return task;
-}
-
-task_t *sched_load_elf(uint32_t cpu_num, vnode_t *node, int argc, char *argv[]) {
-    pagemap_t *old_pagemap = vmm_switch_pagemap(kernel_pagemap);
-    task_t *task = (task_t*)kmalloc(sizeof(task_t));
-    uint8_t *buffer = (uint8_t*)kmalloc(node->size);
-    vfs_read(node, buffer, node->size);
-
-    task->id = current_id++;
-    task->cpu_num = cpu_num;
-    task->pagemap = vmm_new_pagemap();
-
-    task->ctx.rip = (uint64_t)elf_load(buffer, task->pagemap);
-
-    uint64_t stack = (uint64_t)vmm_alloc(task->pagemap, 8, true);
-    vmm_switch_pagemap(task->pagemap);
-    memset((void*)stack, 0, PAGE_SIZE);
-    vmm_switch_pagemap(old_pagemap);
-
+void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]) {
+    // Copy the arguments into kernel memory
     char **kernel_argv = (char**)kmalloc(argc * 8);
     for (int i = 0; i < argc; i++) {
-        kernel_argv[i] = (char*)kmalloc(strlen(argv[i]) + 1);
-        memcpy(kernel_argv[i], argv[i], strlen(argv[i]) + 1);
+        int size = strlen(argv[i]) + 1;
+        kernel_argv[i] = (char*)kmalloc(size);
+        memcpy(kernel_argv[i], argv[i], size);
     }
 
-    char **user_argv = (char**)vmm_alloc(task->pagemap, DIV_ROUND_UP(argc * 8, PAGE_SIZE), true);
-    vmm_switch_pagemap(task->pagemap);
+    // Copy the arguments to the thread stack.
+    uint64_t thread_argv[argc];
+    uint64_t stack_top = thread->ctx.rsp;
+    uint64_t offset = 0;
+    pagemap_t *restore = vmm_switch_pagemap(thread->pagemap);
     for (int i = 0; i < argc; i++) {
-        user_argv[i] = (char*)vmm_alloc(task->pagemap, DIV_ROUND_UP(strlen(kernel_argv[i]) + 1, PAGE_SIZE), true);
-        memcpy(user_argv[i], kernel_argv[i], strlen(kernel_argv[i]) + 1);
+        int size = strlen(kernel_argv[i]) + 1;
+        offset += ALIGN_UP(size, 16); // Keep aligned to 16 bytes (ABI requirement)
+        thread_argv[i] = stack_top - offset;
+        memcpy((void*)(stack_top - offset), kernel_argv[i], size);
     }
-    vmm_switch_pagemap(old_pagemap);
 
-    for (int i = 0; i < argc; i++)
-        vmm_free(kernel_pagemap, kernel_argv[i]);
-    vmm_free(kernel_pagemap, kernel_argv);
+    // Set up argv and argc
+    offset += 8;
+    *(uint64_t*)(stack_top - offset) = 0; // NULL env for now
 
-    uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 2, false);
-    memset((void*)kernel_stack, 0, PAGE_SIZE);
+    offset += 8;
+    *(uint64_t*)(stack_top - offset) = 0; // argv[argc] = NULL
 
-    task->kernel_stack = kernel_stack;
-    task->kernel_rsp = kernel_stack + (PAGE_SIZE * 2);
+    for (int i = argc - 1; i >= 0; i--) {
+        offset += 8;
+        *(uint64_t*)(stack_top - offset) = thread_argv[i];
+    }
 
-    kfree(buffer);
-    task->ctx.rsp = stack + (PAGE_SIZE * 8);
-    task->ctx.rdi = argc;
-    task->ctx.rsi = (uint64_t)user_argv;
-    task->ctx.cs = 0x1b; // 0x18 | 3
-    task->ctx.ss = 0x23; // 0x20 | 3
-    task->ctx.rflags = 0x202;
-    task->stack = stack;
-    task->handle_count = 0;
-    task->user = true;
+    offset += 8;
+    *(uint64_t*)(stack_top - offset) = argc;
 
-    sched_add_task(get_cpu(cpu_num), task);
+    vmm_switch_pagemap(restore);
 
-    return task;
+    thread->ctx.rsp = stack_top - offset;
 }
 
-task_t *sched_branch(uint32_t cpu_num, task_t *parent, void *entry, void *arg) {
-    pagemap_t *old_pagemap = vmm_switch_pagemap(kernel_pagemap);
-    task_t *task = (task_t*)kmalloc(sizeof(task_t));
+thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[]) {
+    thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+    thread->id = tid++;
+    thread->cpu_num = cpu_num;
+    thread->parent = parent;
+    thread->pagemap = parent->pagemap;
 
-    task->id = current_id++;
-    task->cpu_num = cpu_num;
-    task->pagemap = parent->pagemap;
+    // Load ELF
+    uint8_t *buffer = (uint8_t*)kmalloc(node->size);
+    vfs_read(node, buffer, 0, node->size);
+    thread->ctx.rip = elf_load(buffer, thread->pagemap);
 
-    task->ctx.rip = (uint64_t)entry;
-
-    uint64_t stack = (uint64_t)vmm_alloc(task->pagemap, 8, true);
-    vmm_switch_pagemap(task->pagemap);
-    memset((void*)stack, 0, PAGE_SIZE);
-    vmm_switch_pagemap(old_pagemap);
-
-    uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 2, false);
+    // Kernel stack (16 KB)
+    uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 4, false);
     memset((void*)kernel_stack, 0, PAGE_SIZE);
 
-    task->kernel_stack = kernel_stack;
-    task->kernel_rsp = kernel_stack + (PAGE_SIZE * 2);
+    thread->kernel_stack = kernel_stack;
+    thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
 
-    task->ctx.rsp = stack + (PAGE_SIZE * 8);
-    task->ctx.rdi = (uint64_t)arg;
-    task->ctx.cs = 0x1b; // 0x18 | 3
-    task->ctx.ss = 0x23; // 0x20 | 3
-    task->ctx.rflags = 0x202;
-    task->stack = stack;
-    for (int i = 0; i < parent->handle_count; i++) {
-        task->handles[i] = parent->handles[i];
-    }
-    task->handle_count = parent->handle_count;
-    task->user = true;
+    // Thread stack (32 KB)
+    uint64_t thread_stack = (uint64_t)vmm_alloc(thread->pagemap, 8, true);
+    uint64_t thread_stack_top = thread_stack + 8 * PAGE_SIZE;
+    thread->stack = thread_stack;
 
-    sched_add_task(get_cpu(cpu_num), task);
+    // Set up the rest of the registers
+    thread->ctx.cs = 0x1b;
+    thread->ctx.ss = 0x23;
+    thread->ctx.rflags = 0x202;
 
-    return task;
+    // Set up stack (argc, argv, env)
+    thread->ctx.rsp = thread_stack_top;
+    sched_prepare_user_stack(thread, argc, argv);
+
+    thread->state = THREAD_RUNNING;
+    get_cpu(cpu_num)->has_runnable_thread = true;
+
+    sched_add_thread(get_cpu(cpu_num), thread);
+
+    return thread;
 }
 
 void sched_switch(context_t *ctx) {
     cpu_t *cpu = this_cpu();
-    task_t *switch_to = NULL;
-    if (cpu->current_task) {
-        cpu->current_task->ctx = *ctx;
-        switch_to = cpu->current_task->next;
-    } else
-        switch_to = cpu->task_idle;
-    cpu->current_task = switch_to;
-    *ctx = switch_to->ctx;
-    if (switch_to->user)
-        tss_set_rsp(cpu->id, 0, (void*)switch_to->kernel_rsp);
-    vmm_switch_pagemap(switch_to->pagemap);
+    while (!cpu->thread_head)
+        __asm__ volatile ("pause");
+    spinlock_lock(&cpu->sched_lock);
+    thread_t *next_thread = NULL;
+    if (cpu->current_thread) {
+        cpu->current_thread->ctx = *ctx;
+        next_thread = cpu->current_thread->next;
+        while (next_thread->state != THREAD_RUNNING) {
+            next_thread = next_thread->next;
+            if (next_thread == cpu->current_thread) {
+                cpu->has_runnable_thread = false;
+                LOG_INFO("No runnable tasks left. Scheduler sleeping.\n");
+                spinlock_free(&cpu->sched_lock);
+                while (!cpu->has_runnable_thread)
+                    __asm__ volatile ("pause");
+                LOG_INFO("Runnable task found! Waking up scheduler.\n");
+                spinlock_lock(&cpu->sched_lock);
+            }
+        }
+    } else next_thread = cpu->thread_head;
+    cpu->current_thread = next_thread;
+    *ctx = next_thread->ctx;
+    tss_set_rsp(cpu->id, 0, (void*)next_thread->kernel_rsp);
+    vmm_switch_pagemap(next_thread->parent->pagemap);
+    spinlock_free(&cpu->sched_lock);
+    lapic_oneshot(SCHED_VEC, SCHED_QUANTUM);
     lapic_eoi();
-    lapic_oneshot(SCHED_VEC, TASK_QUANTUM);
 }
 
-task_t *this_task() {
-    return this_cpu()->current_task;
+thread_t *this_thread() {
+    return this_cpu()->current_thread;
+}
+
+proc_t *this_proc() {
+    return this_cpu()->current_thread->parent;
+}
+
+void sched_exit(int code) {
+    thread_t *thread = this_thread();
+    LOG_INFO("Thread %d exited with code %d.\n", thread->id, code);
+    thread->state = THREAD_ZOMBIE;
+    // Immediately yield!
+    lapic_ipi(this_cpu()->id, SCHED_VEC);
 }

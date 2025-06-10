@@ -21,8 +21,8 @@
 #include <pci.h>
 #include <ahci.h>
 #include <sched.h>
-#include <ipc.h>
 #include <vfs.h>
+#include <ext2.h>
 #include <syscall.h>
 #include <devices.h>
 #include <driver.h>
@@ -121,24 +121,13 @@ void kmain() {
     smp_init();
     pci_init();
     ahci_init();
-    char mnt_point = vfs_mount_disk(ahci_ports[0]);
-    LOG_OK("Mounted disk #0 as FAT32 (Letter %c).\n", mnt_point);
-    sched_install();
     sched_init();
     dev_init();
     syscall_init();
+    vfs_init();
 
-    vnode_t *kb_node = vfs_open("A:/ps2kb.o");
-    driver_load_node(kb_node);
-    LOG_OK("PS/2 Keyboard driver loaded.\n");
-    vnode_t *mouse_node = vfs_open("A:/ps2mouse.o");
-    driver_load_node(mouse_node);
-    LOG_OK("PS/2 Mouse driver loaded.\n");
-
-    vnode_t *init = vfs_open("A:/init");
-    char *argv[] = {"init"};
-    sched_load_elf(1, init, 1, argv);
-    vfs_close(init);
+    proc_t *proc = sched_new_proc();
+    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/bin/init"), 1, (char*[]){"init"});
 
     lapic_ipi_all(0, SCHED_VEC);
 
@@ -156,7 +145,6 @@ kernel_sym_t kernel_sym_table[] ={
     {"kfree", kfree},
     {"spinlock_lock", spinlock_lock},
     {"spinlock_free", spinlock_free},
-    {"dev_new", dev_new},
 };
 
 uint64_t kernel_find_sym(const char *name) {
