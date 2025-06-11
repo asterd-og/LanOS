@@ -11,6 +11,7 @@ void lapic_write(uint32_t reg, uint64_t val);
 void lapic_eoi();
 void lapic_ipi(uint32_t lapic_id, uint32_t data);
 void lapic_ipi_all(uint32_t lapic_id, uint32_t vector);
+void lapic_ipi_others(uint32_t lapic_id, uint32_t vector);
 void lapic_oneshot(uint32_t vector, uint64_t ms);
 uint64_t lapic_init_timer();
 void lapic_stop_timer();

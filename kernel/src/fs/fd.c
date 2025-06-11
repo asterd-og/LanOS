@@ -5,6 +5,10 @@
 fd_t *fd_open(const char *path, int flags) {
     fd_t *fd = (fd_t*)kmalloc(sizeof(fd_t));
     fd->node = vfs_open(this_proc()->cwd, path);
+    if (!fd->node) {
+        kfree(fd);
+        return NULL;
+    }
     fd->flags = flags;
     fd->off = 0;
     return fd;

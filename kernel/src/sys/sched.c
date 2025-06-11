@@ -1,5 +1,3 @@
-#include "vfs.h"
-#include "vmm.h"
 #include <sched.h>
 #include <string.h>
 #include <apic.h>
@@ -10,6 +8,7 @@
 #include <gdt.h>
 #include <spinlock.h>
 #include <log.h>
+#include <cpu.h>
 
 uint64_t tid = 0;
 uint64_t pid = 0;
@@ -25,10 +24,11 @@ proc_t *sched_new_proc() {
     proc->children = NULL;
     proc->pagemap = vmm_new_pagemap();
     memset(proc->fd_table, 0, 256 * 8);
-    proc->fd_table[0] = NULL; // TODO stdin
+    proc->fd_table[0] = fd_open("/dev/kb", O_WRONLY);
     proc->fd_table[1] = fd_open("/dev/con", O_WRONLY);
     proc->fd_table[2] = fd_open("/dev/con", O_WRONLY);
-    proc->fd_count = 3;
+    proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY);
+    proc->fd_count = 4;
     return proc;
 }
 
@@ -124,6 +124,8 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     thread->ctx.rsp = thread_stack_top;
     sched_prepare_user_stack(thread, argc, argv);
 
+    thread->fs = 0;
+
     thread->state = THREAD_RUNNING;
     get_cpu(cpu_num)->has_runnable_thread = true;
 
@@ -139,6 +141,7 @@ void sched_switch(context_t *ctx) {
     spinlock_lock(&cpu->sched_lock);
     thread_t *next_thread = NULL;
     if (cpu->current_thread) {
+        cpu->current_thread->fs = read_msr(FS_BASE);
         cpu->current_thread->ctx = *ctx;
         next_thread = cpu->current_thread->next;
         while (next_thread->state != THREAD_RUNNING) {
@@ -158,6 +161,7 @@ void sched_switch(context_t *ctx) {
     *ctx = next_thread->ctx;
     tss_set_rsp(cpu->id, 0, (void*)next_thread->kernel_rsp);
     vmm_switch_pagemap(next_thread->parent->pagemap);
+    write_msr(FS_BASE, next_thread->fs);
     spinlock_free(&cpu->sched_lock);
     lapic_oneshot(SCHED_VEC, SCHED_QUANTUM);
     lapic_eoi();

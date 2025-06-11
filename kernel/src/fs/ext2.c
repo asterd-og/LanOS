@@ -34,72 +34,13 @@ void ext2_read_inode(ext2_fs_t *fs, uint32_t inode_num, ext2_inode_t *inode) {
     kfree(buffer);
 }
 
-/*
-int ext2_read_singly_indirect(ext2_fs_t *fs, uint8_t *buffer, uint32_t indirect_block, uint32_t max_blocks) {
-    size_t block_count = fs->block_size / sizeof(uint32_t);
-    size_t indirect_block_size = block_count * fs->block_size;
-    uint32_t *block_arr = (uint32_t*)kmalloc(fs->block_size);
-    memset(block_arr, 0, fs->block_size);
-    ext2_disk_read(fs, block_arr, indirect_block, fs->block_size);
-    uint32_t read_blocks = 0;
-    for (int i = 0; i < max_blocks; i++) {
-        ext2_disk_read(fs, buffer + (i * fs->block_size), block_arr[i], 1);
-        read_blocks++;
-    }
-    kfree(block_arr);
-    return read_blocks;
-}
-
-int ext2_read_doubly_indirect(ext2_fs_t *fs, uint8_t *buffer, uint32_t indirect_block, uint32_t max_blocks) {
-    size_t block_count = fs->block_size / sizeof(uint32_t);
-    size_t indirect_block_size = block_count * fs->block_size;
-    uint32_t *block_arr = (uint32_t*)kmalloc(fs->block_size);
-    memset(block_arr, 0, fs->block_size);
-    ext2_disk_read(fs, block_arr, indirect_block, fs->block_size);
-
-    uint32_t read_blocks = 0;
-    uint32_t rem = max_blocks;
-    for (int i = 0; i < block_count; i++) {
-        uint32_t indirect_read_count = ext2_read_singly_indirect(fs,
-            buffer + (i * indirect_block_size), block_arr[i], MAX(rem, block_count));
-        read_blocks += indirect_read_count;
-        rem -= indirect_read_count;
-        if (!rem)
-            break;
-    }
-    kfree(block_arr);
-    return read_blocks;
-}
-
-int ext2_read_triply_indirect(ext2_fs_t *fs, uint8_t *buffer, uint32_t indirect_block, uint32_t max_blocks) {
-    size_t block_count = fs->block_size / sizeof(uint32_t);
-    size_t doubly_indirect_block_count = block_count * block_count;
-    size_t doubly_indirect_size = doubly_indirect_block_count * fs->block_size;
-    uint32_t *block_arr = (uint32_t*)kmalloc(fs->block_size);
-    memset(block_arr, 0, fs->block_size);
-    ext2_disk_read(fs, block_arr, indirect_block, fs->block_size);
-
-    uint32_t read_blocks = 0;
-    uint32_t rem = max_blocks;
-    for (int i = 0; i < block_count; i++) {
-        uint32_t indirect_read_count = ext2_read_doubly_indirect(fs,
-            buffer + (i * doubly_indirect_size), block_arr[i], rem);
-        read_blocks += indirect_read_count;
-        rem -= indirect_read_count;
-        if (!rem)
-            break;
-    }
-    kfree(block_arr);
-    return read_blocks;
-}*/
-
 int ext2_read_singly(ext2_fs_t *fs, uint8_t *buffer, uint32_t id, uint32_t start_block, uint32_t block_count) {
     uint32_t n = fs->block_size / 4;
     uint32_t blocks[n];
     ext2_disk_read(fs, blocks, id, fs->block_size);
     int read = 0;
     for (uint32_t i = start_block; i < n && read < block_count; i++) {
-        ext2_disk_read(fs, buffer + i * fs->block_size, blocks[i], fs->block_size);
+        ext2_disk_read(fs, buffer + read * fs->block_size, blocks[i], fs->block_size);
         read++;
     }
     return read;
@@ -196,6 +137,7 @@ void ext2_populate_dir(ext2_fs_t *fs, vnode_t *node, ext2_inode_t *inode) {
         current->name[dirent->name_len] = 0;
         current->inode = dirent->inode;
         current->type = dirent->file_type;
+        current->parent = node;
         ext2_read_inode(fs, current->inode, &temp_node);
         current->size = temp_node.size;
         offset += dirent->entry_len;
@@ -212,11 +154,15 @@ void ext2_populate_dir(ext2_fs_t *fs, vnode_t *node, ext2_inode_t *inode) {
 size_t ext2_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
     ext2_inode_t inode;
     ext2_fs_t *fs = (ext2_fs_t*)node->mnt_info;
+    ext2_read_inode(fs, node->inode, &inode);
+    if (off >= inode.size)
+        return 0;
+    if (off + len > inode.size)
+        len = inode.size - off;
     uint8_t *temp_buf = (uint8_t*)kmalloc(ALIGN_UP(len, fs->block_size));
     size_t aligned_off = ALIGN_DOWN(off, fs->block_size);
-    uint32_t block_off = (aligned_off > 0 ? aligned_off / fs->block_size : 0);
-    ext2_read_inode(fs, node->inode, &inode);
-    ext2_read_inode_blocks(fs, &inode, temp_buf, block_off, DIV_ROUND_UP(len, fs->block_size));
+    uint32_t block_off = aligned_off / fs->block_size;
+    ext2_read_inode_blocks(fs, &inode, temp_buf, block_off, DIV_ROUND_UP(len + (off - aligned_off), fs->block_size));
     size_t rem_off = off - aligned_off;
     memcpy(buffer, temp_buf + rem_off, len);
     kfree(temp_buf);

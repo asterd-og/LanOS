@@ -26,6 +26,7 @@ typedef struct thread_t {
     uint64_t stack;
     int state;
     context_t ctx;
+    uint64_t fs;
     bool user;
     pagemap_t *pagemap;
     struct thread_t *next;

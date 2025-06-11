@@ -60,6 +60,10 @@ void lapic_ipi_all(uint32_t lapic_id, uint32_t vector) {
     lapic_ipi(lapic_id, vector | 0x80000);
 }
 
+void lapic_ipi_others(uint32_t lapic_id, uint32_t vector) {
+    lapic_ipi(lapic_id, vector | 0xC0000);
+}
+
 void lapic_oneshot(uint32_t vector, uint64_t ms) {
     lapic_write(0x320, 0x10000);
     lapic_write(0x380, 0);

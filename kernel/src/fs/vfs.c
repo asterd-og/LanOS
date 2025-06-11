@@ -41,6 +41,14 @@ vnode_t *vfs_open(vnode_t *root, const char *path) {
     memcpy(new_path, path, strlen(path) + 1);
     char *token = strtok(new_path + (path[0] == '/' ? 1 : 0), "/");
     while (token != NULL) {
+        if (!strcmp(token, ".")) {
+            token = strtok(NULL, "/");
+            continue;
+        } else if (!strcmp(token, "..")) {
+            current = current->parent;
+            token = strtok(NULL, "/");
+            continue;
+        }
         current = vfs_lookup(current, token);
         if (!current) {
             kfree(new_path);

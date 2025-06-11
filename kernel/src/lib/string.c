@@ -58,12 +58,11 @@ int strlen(const char *s1) {
 }
 
 int strcmp(const char *s1, const char *s2) {
-    int i = 0;
-    while (s1[i] != 0) {
-        if (s2[i] != s1[i]) return 1;
-        i++;
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
     }
-    return 0;
+    return (unsigned char)*s1 - (unsigned char)*s2;
 }
 
 char *strtok(char *str, const char *delim) {

@@ -24,10 +24,11 @@
 #include <vfs.h>
 #include <ext2.h>
 #include <syscall.h>
-#include <devices.h>
 #include <driver.h>
 #include <ports.h>
 #include <spinlock.h>
+#include <devfs.h>
+#include <serial.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -88,7 +89,7 @@ void kmain() {
     framebuffer_response = framebuffer_request.response;
     struct limine_framebuffer *framebuffer = framebuffer_response->framebuffers[0];
 
-    uint32_t default_bg = 0xFF000000;
+    uint32_t default_bg = 0xFF301934;
     uint32_t default_fg = 0xFFFFFFFF;
 
     flanterm_ctx = flanterm_fb_init(
@@ -122,14 +123,16 @@ void kmain() {
     pci_init();
     ahci_init();
     sched_init();
-    dev_init();
     syscall_init();
     vfs_init();
+    serial_init();
+    driver_load_node(vfs_open(root_node, "/ps2kb.o"));
+    LOG_OK("PS/2 Keyboard driver loaded.\n");
 
     proc_t *proc = sched_new_proc();
-    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/bin/init"), 1, (char*[]){"init"});
+    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"});
 
-    lapic_ipi_all(0, SCHED_VEC);
+    lapic_ipi_others(0, SCHED_VEC);
 
     hcf();
 }
@@ -145,6 +148,7 @@ kernel_sym_t kernel_sym_table[] ={
     {"kfree", kfree},
     {"spinlock_lock", spinlock_lock},
     {"spinlock_free", spinlock_free},
+    {"devfs_register_dev", devfs_register_dev}
 };
 
 uint64_t kernel_find_sym(const char *name) {
