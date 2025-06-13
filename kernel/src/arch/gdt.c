@@ -13,12 +13,12 @@ void gdt_init(uint32_t cpu_num) {
     gdt_tables[cpu_num].entries[0] = 0x0000000000000000;
     gdt_tables[cpu_num].entries[1] = 0x00af9b000000ffff; // 0x08 64 bit cs (code)
     gdt_tables[cpu_num].entries[2] = 0x00af93000000ffff; // 0x10 64 bit ss (data)
-    gdt_tables[cpu_num].entries[3] = 0x00affb000000ffff; // 0x18 user mode cs (code)
-    gdt_tables[cpu_num].entries[4] = 0x00aff3000000ffff; // 0x20 user mode ss (data)
+    gdt_tables[cpu_num].entries[3] = 0x00aff3000000ffff; // 0x18 user mode ss (data)
+    gdt_tables[cpu_num].entries[4] = 0x00affb000000ffff; // 0x20 user mode cs (code)
 
     uint64_t tss = (uint64_t)&tss_desc[cpu_num];
 
-    gdt_tables[cpu_num].tss_entry.len = sizeof(tss_entry_t);
+    gdt_tables[cpu_num].tss_entry.len = sizeof(tss_desc_t) - 1;
     gdt_tables[cpu_num].tss_entry.base = (uint16_t)(tss & 0xffff);
     gdt_tables[cpu_num].tss_entry.base1 = (uint8_t)((tss >> 16) & 0xff);
     gdt_tables[cpu_num].tss_entry.flags = 0x89;
@@ -38,4 +38,8 @@ void gdt_init(uint32_t cpu_num) {
 
 void tss_set_rsp(uint32_t cpu_num, int rsp, void *stack) {
     tss_desc[cpu_num].rsp[rsp] = (uint64_t)stack;
+}
+
+void tss_set_ist(uint32_t cpu_num, int ist, void *stack) {
+    tss_desc[cpu_num].ist[ist] = (uint64_t)stack;
 }

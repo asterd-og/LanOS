@@ -36,3 +36,4 @@ typedef struct {
 
 void gdt_init(uint32_t cpu_num);
 void tss_set_rsp(uint32_t cpu_num, int rsp, void *stack);
+void tss_set_ist(uint32_t cpu_num, int ist, void *stack);

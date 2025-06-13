@@ -3,10 +3,7 @@
 #include <string.h>
 #include <errno.h>
 
-uint64_t sys_getcwd(context_t *ctx) {
-    char *buf = (char*)ctx->rdi;
-    size_t size = (size_t)ctx->rsi;
-
+uint64_t sys_getcwd(char *buf, size_t size) {
     int count = 0;
     vnode_t *current = this_proc()->cwd;
     while (current != root_node) {

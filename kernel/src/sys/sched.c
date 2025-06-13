@@ -10,25 +10,57 @@
 #include <log.h>
 #include <cpu.h>
 
-uint64_t tid = 0;
-uint64_t pid = 0;
+uint64_t sched_tid = 0;
+uint64_t sched_pid = 0;
+void *restore_sigjmp_addr = NULL;
+
+proc_t *sched_proclist[256] = { 0 };
+
+void sched_restore_sigjmp() {
+    __asm__ volatile ("movq %0, %%rax\n"
+                      "syscall" : : "a"((uint64_t)256));
+}
+
+int sched_sigjmp(thread_t *thread, int sig_no) {
+    proc_t *parent = thread->parent;
+    if (!parent->sig_handlers[sig_no].handler) {
+        printf("Unhandled signal %d for tid %d, killing thread.\n", sig_no, thread->id);
+        thread->state = THREAD_ZOMBIE;
+        return 1;
+    }
+    memcpy(&thread->sig_ctx, &thread->ctx, sizeof(context_t));
+    *(uint64_t*)(thread->ctx.rsp - 8) = (uint64_t)restore_sigjmp_addr;
+    thread->ctx.rsp -= 8;
+    thread->ctx.rip = (uint64_t)parent->sig_handlers[sig_no].handler;
+    thread->ctx.rdi = sig_no;
+    printf("Got signal %d at %p.\n", sig_no, thread->ctx.rip);
+    return 0;
+}
 
 void sched_init() {
     idt_install_irq(16, sched_switch);
+    idt_set_ist(SCHED_VEC, 1);
+    restore_sigjmp_addr = vmm_alloc(kernel_pagemap, 1, true);
+    memcpy(restore_sigjmp_addr, sched_restore_sigjmp,
+        (uint64_t)sched_sigjmp - (uint64_t)sched_restore_sigjmp);
+    // ^~ Wicked way of not copying sched_sigjmp accidentally
 }
 
 proc_t *sched_new_proc() {
     proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
-    proc->id = pid++;
+    proc->id = sched_pid++;
     proc->cwd = root_node;
     proc->children = NULL;
+    proc->parent = NULL;
     proc->pagemap = vmm_new_pagemap();
+    memset(proc->sig_handlers, 0, 32 * sizeof(sigaction_t));
     memset(proc->fd_table, 0, 256 * 8);
     proc->fd_table[0] = fd_open("/dev/kb", O_WRONLY);
     proc->fd_table[1] = fd_open("/dev/con", O_WRONLY);
     proc->fd_table[2] = fd_open("/dev/con", O_WRONLY);
     proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY);
     proc->fd_count = 4;
+    sched_proclist[proc->id] = proc;
     return proc;
 }
 
@@ -36,17 +68,17 @@ void sched_add_thread(cpu_t *cpu, thread_t *thread) {
     spinlock_lock(&cpu->sched_lock);
     cpu->thread_count++;
     if (!cpu->thread_head) {
-        thread->next = thread;
-        thread->prev = thread;
+        thread->list_next = thread;
+        thread->list_prev = thread;
         cpu->thread_head = thread;
         spinlock_free(&cpu->sched_lock);
         return;
     }
 
-    thread->next = cpu->thread_head;
-    thread->prev = cpu->thread_head->prev;
-    cpu->thread_head->prev->next = thread;
-    cpu->thread_head->prev = thread;
+    thread->list_next = cpu->thread_head;
+    thread->list_prev = cpu->thread_head->list_prev;
+    cpu->thread_head->list_prev->list_next = thread;
+    cpu->thread_head->list_prev = thread;
     spinlock_free(&cpu->sched_lock);
 }
 
@@ -93,10 +125,24 @@ void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]) {
 
 thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[]) {
     thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
-    thread->id = tid++;
+    thread->id = sched_tid++;
     thread->cpu_num = cpu_num;
     thread->parent = parent;
     thread->pagemap = parent->pagemap;
+
+    if (!parent->children) {
+        parent->children = thread;
+        thread->next = thread;
+        thread->prev = thread;
+    } else {
+        thread->next = parent->children;
+        thread->prev = parent->children->prev;
+        parent->children->prev->next = thread;
+        parent->children->prev = thread;
+    }
+
+    thread->sig_deliver = 0;
+    thread->sig_mask = 0;
 
     // Load ELF
     uint8_t *buffer = (uint8_t*)kmalloc(node->size);
@@ -116,13 +162,14 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     thread->stack = thread_stack;
 
     // Set up the rest of the registers
-    thread->ctx.cs = 0x1b;
-    thread->ctx.ss = 0x23;
+    thread->ctx.cs = 0x23;
+    thread->ctx.ss = 0x1b;
     thread->ctx.rflags = 0x202;
 
     // Set up stack (argc, argv, env)
     thread->ctx.rsp = thread_stack_top;
     sched_prepare_user_stack(thread, argc, argv);
+    thread->thread_stack = thread->ctx.rsp;
 
     thread->fs = 0;
 
@@ -134,34 +181,50 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     return thread;
 }
 
+thread_t *sched_find_runnable_thread(cpu_t *cpu, bool sleep) {
+    if (!cpu->current_thread)
+        return cpu->thread_head;
+    thread_t *thread = cpu->current_thread->list_next;
+    while (thread->state != THREAD_RUNNING) {
+        thread = thread->list_next;
+        if (thread != cpu->current_thread)
+            continue;
+        cpu->has_runnable_thread = false;
+        if (!sleep)
+            return NULL;
+        LOG_INFO("No runnable tasks left. Scheduler sleeping.\n");
+        spinlock_free(&cpu->sched_lock);
+        while (!cpu->has_runnable_thread)
+            __asm__ volatile ("pause");
+        LOG_INFO("Runnable task found! Waking up scheduler.\n");
+        spinlock_lock(&cpu->sched_lock);
+    }
+    return thread;
+}
+
 void sched_switch(context_t *ctx) {
     cpu_t *cpu = this_cpu();
     while (!cpu->thread_head)
         __asm__ volatile ("pause");
     spinlock_lock(&cpu->sched_lock);
-    thread_t *next_thread = NULL;
     if (cpu->current_thread) {
-        cpu->current_thread->fs = read_msr(FS_BASE);
-        cpu->current_thread->ctx = *ctx;
-        next_thread = cpu->current_thread->next;
-        while (next_thread->state != THREAD_RUNNING) {
-            next_thread = next_thread->next;
-            if (next_thread == cpu->current_thread) {
-                cpu->has_runnable_thread = false;
-                LOG_INFO("No runnable tasks left. Scheduler sleeping.\n");
-                spinlock_free(&cpu->sched_lock);
-                while (!cpu->has_runnable_thread)
-                    __asm__ volatile ("pause");
-                LOG_INFO("Runnable task found! Waking up scheduler.\n");
-                spinlock_lock(&cpu->sched_lock);
+        thread_t *thread = cpu->current_thread;
+        thread->fs = read_msr(FS_BASE);
+        thread->ctx = *ctx;
+        // Check for signals
+        for (int i = 0; i < 32; i++) {
+            if (thread->sig_deliver & (1 << i) && !(thread->sig_mask & (1 << i))) {
+                sched_sigjmp(thread, i);
+                thread->sig_deliver &= ~(1 << i);
             }
         }
-    } else next_thread = cpu->thread_head;
+    }
+    thread_t *next_thread = sched_find_runnable_thread(cpu, true);
     cpu->current_thread = next_thread;
     *ctx = next_thread->ctx;
-    tss_set_rsp(cpu->id, 0, (void*)next_thread->kernel_rsp);
-    vmm_switch_pagemap(next_thread->parent->pagemap);
+    vmm_switch_pagemap(next_thread->pagemap);
     write_msr(FS_BASE, next_thread->fs);
+    write_msr(KERNEL_GS_BASE, (uint64_t)next_thread);
     spinlock_free(&cpu->sched_lock);
     lapic_oneshot(SCHED_VEC, SCHED_QUANTUM);
     lapic_eoi();

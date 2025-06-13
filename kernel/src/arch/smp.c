@@ -10,6 +10,7 @@
 #include <apic.h>
 #include <assert.h>
 #include <pmm.h>
+#include <syscall.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_mp_request limine_mp = {
@@ -23,19 +24,28 @@ uint64_t started_count = 0;
 bool smp_started = false;
 int smp_last_cpu = 0;
 
+void smp_setup_kstack(cpu_t *cpu) {
+    void *stack = (void*)vmm_alloc(kernel_pagemap, 8, true);
+    tss_set_ist(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
+    tss_set_rsp(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
+}
+
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     vmm_switch_pagemap(kernel_pagemap);
     spinlock_lock(&smp_lock);
     gdt_init(mp_info->lapic_id);
     idt_reinit();
-    smp_cpu_list[mp_info->lapic_id]->id = mp_info->lapic_id;
+    cpu_t *cpu = smp_cpu_list[mp_info->lapic_id];
+    cpu->id = mp_info->lapic_id;
     lapic_init();
-    smp_cpu_list[mp_info->lapic_id]->lapic_ticks = lapic_init_timer();
-    smp_cpu_list[mp_info->lapic_id]->pagemap = kernel_pagemap;
-    smp_cpu_list[mp_info->lapic_id]->thread_count = 0;
-    smp_cpu_list[mp_info->lapic_id]->thread_head = NULL;
-    smp_cpu_list[mp_info->lapic_id]->sched_lock = 0;
-    smp_cpu_list[mp_info->lapic_id]->has_runnable_thread = false;
+    cpu->lapic_ticks = lapic_init_timer();
+    cpu->pagemap = kernel_pagemap;
+    cpu->thread_count = 0;
+    cpu->thread_head = NULL;
+    cpu->sched_lock = 0;
+    cpu->has_runnable_thread = false;
+    syscall_init();
+    smp_setup_kstack(cpu);
     cpu_enable_sse();
     LOG_OK("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -60,6 +70,7 @@ void smp_init() {
     bsp_cpu->sched_lock = 0;
     bsp_cpu->has_runnable_thread = false;
     smp_cpu_list[bsp_cpu->id] = bsp_cpu;
+    smp_setup_kstack(bsp_cpu);
     cpu_enable_sse();
     LOG_INFO("Detected %zu CPUs.\n", mp_response->cpu_count);
     for (uint64_t i = 0; i < mp_response->cpu_count; i++) {

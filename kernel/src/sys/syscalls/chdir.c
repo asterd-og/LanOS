@@ -2,8 +2,7 @@
 #include <errno.h>
 #include <vfs.h>
 
-uint64_t sys_chdir(context_t *ctx) {
-    const char *path = (const char*)ctx->rdi;
+uint64_t sys_chdir(const char *path) {
     vnode_t *node = vfs_open(this_proc()->cwd, path);
     if (!node)
         return -ENOENT;

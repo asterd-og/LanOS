@@ -18,7 +18,7 @@ typedef struct {
     int64_t st_atime;
     int64_t st_mtime;
     int64_t st_ctime;
-} stat;
+} stat_t;
 
 #define S_IFMT  0170000
 #define S_IFDIR 0040000
@@ -29,10 +29,7 @@ typedef struct {
 #define S_IWUSR 00200
 #define S_IXUSR 00100
 
-uint64_t sys_stat(context_t *ctx) {
-    const char *pathname = (const char*)ctx->rdi;
-    stat *statbuf = (stat*)ctx->rsi;
-
+uint64_t sys_stat(const char *pathname, stat_t *statbuf) {
     vnode_t *node = vfs_open(root_node, pathname);
     if (!node)
         return -ENOENT;
@@ -45,10 +42,7 @@ uint64_t sys_stat(context_t *ctx) {
     return 0;
 }
 
-uint64_t sys_fstat(context_t *ctx) {
-    uint32_t fd_idx = (uint32_t)ctx->rdi;
-    stat *statbuf = (stat*)ctx->rsi;
-
+uint64_t sys_fstat(uint32_t fd_idx, stat_t *statbuf) {
     if (fd_idx > this_proc()->fd_count)
         return -EBADF;
 

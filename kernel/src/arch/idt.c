@@ -2,6 +2,7 @@
 #include <log.h>
 #include <apic.h>
 #include <assert.h>
+#include <sched.h>
 #include <serial.h>
 
 const char *exception_messages[32] = {
@@ -48,7 +49,7 @@ void idt_set_entry(uint16_t vector, void *isr, uint8_t flags);
 
 void idt_init() {
     for (uint16_t vector = 0; vector < 256; vector++)
-        idt_set_entry(vector, idt_int_table[vector], (vector == 0x80 ? 0xef : 0x8e));
+        idt_set_entry(vector, idt_int_table[vector], 0x8e);
 
     idt_desc.size = sizeof(idt_entries) - 1;
     idt_desc.address = (uint64_t)&idt_entries;
@@ -74,6 +75,10 @@ void idt_set_entry(uint16_t vector, void *isr, uint8_t flags) {
     entry->resv = 0;
 }
 
+void idt_set_ist(uint16_t vector, uint8_t ist) {
+    idt_entries[vector].ist = ist;
+}
+
 void idt_install_irq(uint8_t irq, void *handler) {
     handlers[irq] = handler;
     if (irq < 16)
@@ -94,7 +99,8 @@ void idt_exception_handler(context_t *ctx) {
     if (ctx->int_no >= 32)
         return idt_irq_handler(ctx);
     LOG_ERROR("Kernel exception caught: %s.\n", exception_messages[ctx->int_no]);
-    serial_printf("Kernel crash at 0x%p. RSP: 0x%p\n", ctx->rip, ctx->rsp);
+    serial_printf("Kernel crash on core %d at 0x%p. RSP: 0x%p\n", this_cpu()->id, ctx->rip, ctx->rsp);
+    serial_printf("CS: 0x%x SS: 0x%x\n", ctx->cs, ctx->ss);
     // TODO: Dump registers.
     __asm__ volatile ("cli\n\t.1:\n\thlt\n\tjmp .1\n");
 }

@@ -3,10 +3,7 @@
 #include <idt.h>
 #include <sched.h>
 
-uint64_t sys_write(context_t *ctx) {
-    uint32_t fd_idx = (uint32_t)ctx->rdi;
-    void *buf = (void*)ctx->rsi;
-    size_t count = (size_t)ctx->rdx;
+uint64_t sys_write(uint32_t fd_idx, void *buf, size_t count) {
     fd_t *fd = this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;

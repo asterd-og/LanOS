@@ -6,7 +6,6 @@
 #include <heap.h>
 #include <pmm.h>
 #include <vmm.h>
-#include <math.h>
 #include <vfs.h>
 
 void ext2_disk_read(ext2_fs_t *fs, void *buffer, uint32_t block, size_t size) {
@@ -150,7 +149,7 @@ void ext2_populate_dir(ext2_fs_t *fs, vnode_t *node, ext2_inode_t *inode) {
     }
 }
 
-// TODO: Make an icache (inode cache). And compare if len is valid.
+// TODO: Make an icache (inode cache)
 size_t ext2_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
     ext2_inode_t inode;
     ext2_fs_t *fs = (ext2_fs_t*)node->mnt_info;

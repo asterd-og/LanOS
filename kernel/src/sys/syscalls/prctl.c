@@ -3,9 +3,7 @@
 #include <errno.h>
 #include <stdio.h>
 
-uint64_t sys_arch_prctl(context_t *ctx) {
-    int op = (int)ctx->rdi;
-    long extra = (long)ctx->rsi;
+uint64_t sys_arch_prctl(int op, long extra) {
     switch (op) {
         case 0x1002:
             write_msr(FS_BASE, extra);

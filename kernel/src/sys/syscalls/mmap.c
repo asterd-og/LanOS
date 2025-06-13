@@ -2,13 +2,7 @@
 #include <pmm.h>
 #include <string.h>
 
-uint64_t sys_mmap(context_t *ctx) {
-    void *addr = (void*)ctx->rdi;
-    size_t length = (size_t)ctx->rsi;
-    int prot = (size_t)ctx->rdx;
-    int flags = (size_t)ctx->rcx;
-    int fd = (size_t)ctx->r10;
-
+uint64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd) {
     uint64_t vm_flags = MM_USER;
     if (prot & 2) vm_flags |= MM_READ;
     if (prot & 4) vm_flags |= MM_WRITE;

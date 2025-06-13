@@ -5,10 +5,7 @@
 
 typedef ptrdiff_t ssize_t;
 
-uint64_t sys_lseek(context_t *ctx) {
-    uint32_t fd_idx = (uint32_t)ctx->rdi;
-    long offset = (long)ctx->rsi;
-    int whence = (int)ctx->rdx;
+uint64_t sys_lseek(uint32_t fd_idx, long offset, int whence) {
     fd_t *fd = this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;
