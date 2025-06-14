@@ -99,8 +99,12 @@ void idt_exception_handler(context_t *ctx) {
     if (ctx->int_no >= 32)
         return idt_irq_handler(ctx);
     LOG_ERROR("Kernel exception caught: %s.\n", exception_messages[ctx->int_no]);
-    serial_printf("Kernel crash on core %d at 0x%p. RSP: 0x%p\n", this_cpu()->id, ctx->rip, ctx->rsp);
+    serial_printf("Kernel crash on core %d at 0x%p. RSP: 0x%p\n", smp_started ? this_cpu()->id : 0,
+        ctx->rip, ctx->rsp);
     serial_printf("CS: 0x%x SS: 0x%x\n", ctx->cs, ctx->ss);
+    if (smp_started) {
+        serial_printf("On thread %d\n", this_cpu()->current_thread->id);
+    }
     // TODO: Dump registers.
     __asm__ volatile ("cli\n\t.1:\n\thlt\n\tjmp .1\n");
 }

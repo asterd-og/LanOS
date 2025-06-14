@@ -4,6 +4,7 @@
 #include <string.h>
 #include <limine.h>
 #include <smp.h>
+#include <spinlock.h>
 
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
 
@@ -228,27 +229,32 @@ uint64_t vmm_internal_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) 
 void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
     // Look for the first fit on the list.
     if (!page_count) return NULL;
+    spinlock_lock(&pagemap->vma_lock);
     uint64_t addr = vmm_internal_alloc(pagemap, page_count, user);
     for (int i = 0; i < page_count; i++) {
         vmm_map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)pmm_request(),
             MM_READ | MM_WRITE | (user ? MM_USER : 0));
     }
+    spinlock_free(&pagemap->vma_lock);
     return (void*)addr;
 }
 
 void *vmm_alloc_to(pagemap_t *pagemap, uint64_t paddr, uint64_t page_count, bool user) {
     if (!page_count) return NULL;
+    spinlock_lock(&pagemap->vma_lock);
     uint64_t addr = vmm_internal_alloc(pagemap, page_count, user);
     for (int i = 0; i < page_count; i++) {
         vmm_map(pagemap, addr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE),
             MM_READ | MM_WRITE | (user ? MM_USER : 0));
     }
+    spinlock_free(&pagemap->vma_lock);
     return (void*)addr;
 }
 
 void vmm_free(pagemap_t *pagemap, void *ptr) {
     if (((uint64_t)ptr & 0xfff) != 0)
         return;
+    spinlock_lock(&pagemap->vma_lock);
     vma_region_t *region = pagemap->vma_head->next;
     for (; region != pagemap->vma_head; region = region->next) {
         if (region->start == (uint64_t)ptr) {
@@ -258,7 +264,9 @@ void vmm_free(pagemap_t *pagemap, void *ptr) {
                 vmm_unmap(pagemap, region->start + (i * PAGE_SIZE));
             }
             vma_remove_region(region);
+            spinlock_free(&pagemap->vma_lock);
             return;
         }
     }
+    spinlock_free(&pagemap->vma_lock);
 }

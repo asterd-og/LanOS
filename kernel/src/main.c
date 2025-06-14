@@ -89,7 +89,7 @@ void kmain() {
     framebuffer_response = framebuffer_request.response;
     struct limine_framebuffer *framebuffer = framebuffer_response->framebuffers[0];
 
-    uint32_t default_bg = 0xFF301934;
+    uint32_t default_bg = 0xFF000000;
     uint32_t default_fg = 0xFFFFFFFF;
 
     flanterm_ctx = flanterm_fb_init(
@@ -131,6 +131,10 @@ void kmain() {
 
     proc_t *proc = sched_new_proc();
     thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"});
+
+    // TODO: Fix program crashing when on the same core!
+    proc_t *proc2 = sched_new_proc();
+    thread_t *thread2 = sched_new_thread(proc2, 2, vfs_open(root_node, "/usr/bin/init"), 1, (char*[]){"init"});
 
     lapic_ipi_others(0, SCHED_VEC);
 

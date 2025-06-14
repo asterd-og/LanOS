@@ -28,6 +28,7 @@ typedef struct vma_region_t {
 
 typedef struct {
     uint64_t *pml4;
+    int vma_lock;
     vma_region_t *vma_head;
 } pagemap_t;
 

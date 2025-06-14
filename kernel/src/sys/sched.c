@@ -12,14 +12,13 @@
 
 uint64_t sched_tid = 0;
 uint64_t sched_pid = 0;
-void *restore_sigjmp_addr = NULL;
 
 proc_t *sched_proclist[256] = { 0 };
 
-void sched_restore_sigjmp() {
-    __asm__ volatile ("movq %0, %%rax\n"
-                      "syscall" : : "a"((uint64_t)256));
-}
+void *sighandle = NULL;
+
+void sched_sighandle(int sig_no, void *handler);
+void sched_sighandle_end();
 
 int sched_sigjmp(thread_t *thread, int sig_no) {
     proc_t *parent = thread->parent;
@@ -28,22 +27,26 @@ int sched_sigjmp(thread_t *thread, int sig_no) {
         thread->state = THREAD_ZOMBIE;
         return 1;
     }
+    thread->sig_fs = read_msr(FS_BASE);
     memcpy(&thread->sig_ctx, &thread->ctx, sizeof(context_t));
-    *(uint64_t*)(thread->ctx.rsp - 8) = (uint64_t)restore_sigjmp_addr;
+    thread->ctx.rsp = thread->sig_stack + PAGE_SIZE;
+    *(uint64_t*)(thread->ctx.rsp - 8) = (uint64_t)parent->sig_handlers[sig_no].sa_restorer;
     thread->ctx.rsp -= 8;
-    thread->ctx.rip = (uint64_t)parent->sig_handlers[sig_no].handler;
+    thread->ctx.cs = 0x23;
+    thread->ctx.ss = 0x1b;
+    thread->ctx.rip = (uint64_t)sighandle;
     thread->ctx.rdi = sig_no;
-    printf("Got signal %d at %p.\n", sig_no, thread->ctx.rip);
+    thread->ctx.rsi = (uint64_t)parent->sig_handlers[sig_no].handler;
     return 0;
 }
 
 void sched_init() {
     idt_install_irq(16, sched_switch);
     idt_set_ist(SCHED_VEC, 1);
-    restore_sigjmp_addr = vmm_alloc(kernel_pagemap, 1, true);
-    memcpy(restore_sigjmp_addr, sched_restore_sigjmp,
-        (uint64_t)sched_sigjmp - (uint64_t)sched_restore_sigjmp);
-    // ^~ Wicked way of not copying sched_sigjmp accidentally
+    uint64_t sighandle_size = (uint64_t)sched_sighandle_end - (uint64_t)sched_sighandle;
+    sighandle = vmm_alloc(kernel_pagemap, DIV_ROUND_UP(sighandle_size, PAGE_SIZE), true);
+    memcpy(sighandle, sched_sighandle, sighandle_size);
+    // ^~ Wicked way of not copying other kernel functions accidentally
 }
 
 proc_t *sched_new_proc() {
@@ -129,6 +132,7 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     thread->cpu_num = cpu_num;
     thread->parent = parent;
     thread->pagemap = parent->pagemap;
+    thread->flags = 0;
 
     if (!parent->children) {
         parent->children = thread;
@@ -160,6 +164,10 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     uint64_t thread_stack = (uint64_t)vmm_alloc(thread->pagemap, 8, true);
     uint64_t thread_stack_top = thread_stack + 8 * PAGE_SIZE;
     thread->stack = thread_stack;
+
+    // Sig stack (4 KB)
+    uint64_t sig_stack = (uint64_t)vmm_alloc(thread->pagemap, 1, true);
+    thread->sig_stack = sig_stack;
 
     // Set up the rest of the registers
     thread->ctx.cs = 0x23;
@@ -212,7 +220,7 @@ void sched_switch(context_t *ctx) {
         thread->fs = read_msr(FS_BASE);
         thread->ctx = *ctx;
         // Check for signals
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < 63; i++) {
             if (thread->sig_deliver & (1 << i) && !(thread->sig_mask & (1 << i))) {
                 sched_sigjmp(thread, i);
                 thread->sig_deliver &= ~(1 << i);
@@ -242,6 +250,9 @@ void sched_exit(int code) {
     thread_t *thread = this_thread();
     LOG_INFO("Thread %d exited with code %d.\n", thread->id, code);
     thread->state = THREAD_ZOMBIE;
-    // Immediately yield!
+    sched_yield();
+}
+
+void sched_yield() {
     lapic_ipi(this_cpu()->id, SCHED_VEC);
 }

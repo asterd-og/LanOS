@@ -12,6 +12,7 @@ typedef struct vnode_t {
     uint32_t size;
     uint32_t inode;
     char name[256];
+    int lock;
     struct vnode_t *parent;
     struct vnode_t *child;
     struct vnode_t *next;

@@ -8,6 +8,7 @@
 #include <vfs.h>
 #include <fd.h>
 #include <signal.h>
+#include <syscall.h>
 
 #define SCHED_QUANTUM 5
 #define SCHED_VEC 48
@@ -16,6 +17,9 @@
 #define THREAD_RUNNING 1
 #define THREAD_BLOCKED 2
 #define THREAD_SLEEPING 3
+
+#define TFLAGS_SYSCALL 1
+#define TFLAGS_SYSINTR 2
 
 typedef struct proc_t proc_t;
 
@@ -31,10 +35,14 @@ typedef struct thread_t {
     context_t ctx;
     uint64_t fs;
     bool user;
-    uint32_t sig_deliver;
-    uint32_t sig_mask;
+    syscall_frame_t syscall_frame;
+    uint64_t sig_deliver;
+    uint64_t sig_mask;
     context_t sig_ctx;
+    uint64_t sig_stack;
+    uint64_t sig_fs;
     pagemap_t *pagemap;
+    uint64_t flags;
     struct thread_t *next;
     struct thread_t *prev;
     struct thread_t *list_next; // In the cpu thread list
@@ -44,7 +52,7 @@ typedef struct thread_t {
 
 typedef struct proc_t {
     uint64_t id;
-    sigaction_t sig_handlers[32];
+    sigaction_t sig_handlers[64];
     vnode_t *cwd;
     thread_t *children;
     pagemap_t *pagemap;
@@ -64,3 +72,4 @@ void sched_switch(context_t *ctx);
 thread_t *this_thread();
 proc_t *this_proc();
 void sched_exit(int code);
+void sched_yield();
