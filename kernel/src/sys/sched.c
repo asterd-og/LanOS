@@ -56,7 +56,7 @@ proc_t *sched_new_proc() {
     proc->children = NULL;
     proc->parent = NULL;
     proc->pagemap = vmm_new_pagemap();
-    memset(proc->sig_handlers, 0, 32 * sizeof(sigaction_t));
+    memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
     memset(proc->fd_table, 0, 256 * 8);
     proc->fd_table[0] = fd_open("/dev/kb", O_WRONLY);
     proc->fd_table[1] = fd_open("/dev/con", O_WRONLY);
@@ -83,6 +83,19 @@ void sched_add_thread(cpu_t *cpu, thread_t *thread) {
     cpu->thread_head->list_prev->list_next = thread;
     cpu->thread_head->list_prev = thread;
     spinlock_free(&cpu->sched_lock);
+}
+
+void sched_proc_add_thread(proc_t *parent, thread_t *thread) {
+    if (!parent->children) {
+        parent->children = thread;
+        thread->next = thread;
+        thread->prev = thread;
+        return;
+    }
+    thread->next = parent->children;
+    thread->prev = parent->children->prev;
+    parent->children->prev->next = thread;
+    parent->children->prev = thread;
 }
 
 void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]) {
@@ -134,16 +147,7 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     thread->pagemap = parent->pagemap;
     thread->flags = 0;
 
-    if (!parent->children) {
-        parent->children = thread;
-        thread->next = thread;
-        thread->prev = thread;
-    } else {
-        thread->next = parent->children;
-        thread->prev = parent->children->prev;
-        parent->children->prev->next = thread;
-        parent->children->prev = thread;
-    }
+    sched_proc_add_thread(parent, thread);
 
     thread->sig_deliver = 0;
     thread->sig_mask = 0;
@@ -155,7 +159,7 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
 
     // Kernel stack (16 KB)
     uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 4, false);
-    memset((void*)kernel_stack, 0, PAGE_SIZE);
+    memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
 
     thread->kernel_stack = kernel_stack;
     thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
@@ -187,6 +191,85 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     sched_add_thread(get_cpu(cpu_num), thread);
 
     return thread;
+}
+
+cpu_t *get_lw_cpu() {
+    cpu_t *cpu = NULL;
+    for (int i = 0; i < smp_last_cpu; i++) {
+        if (smp_cpu_list[i] == NULL || i == smp_bsp_cpu) continue;
+        if (!cpu) {
+            cpu = smp_cpu_list[i];
+            continue;
+        }
+        if (smp_cpu_list[i]->thread_count < cpu->thread_count)
+            cpu = smp_cpu_list[i];
+    }
+    return cpu;
+}
+
+uint64_t sched_get_rip();
+
+thread_t *sched_fork_thread(proc_t *proc, thread_t *parent, syscall_frame_t *frame) {
+    thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+    cpu_t *cpu = get_lw_cpu();
+    thread->id = sched_tid++;
+    thread->cpu_num = cpu->id;
+    thread->parent = proc;
+    thread->pagemap = proc->pagemap;
+    thread->flags = 0;
+
+    sched_proc_add_thread(proc, thread);
+
+    thread->sig_deliver = 0;
+    thread->sig_mask = parent->sig_mask;
+
+    // Set up RIP
+    uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 4, false);
+    memcpy((void*)kernel_stack, (void*)parent->kernel_stack, 4 * PAGE_SIZE);
+
+    thread->kernel_stack = kernel_stack;
+    thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
+
+    thread->stack = parent->stack;
+
+    // Sig stack (4 KB)
+    thread->sig_stack = parent->sig_stack;
+
+    // Set up the rest of the registers
+    memcpy(&thread->ctx, frame, sizeof(context_t));
+    thread->ctx.rsp = parent->thread_stack;
+    thread->ctx.cs = 0x23;
+    thread->ctx.ss = 0x1b;
+    thread->ctx.rflags = frame->r11;
+    thread->ctx.rax = 0;
+    thread->ctx.rip = frame->rcx;
+
+    // Set up stack (argc, argv, env)
+    thread->thread_stack = parent->thread_stack;
+
+    thread->fs = read_msr(FS_BASE);
+
+    thread->state = THREAD_RUNNING;
+    cpu->has_runnable_thread = true;
+    
+    sched_add_thread(cpu, thread);
+
+    return thread;
+}
+
+proc_t *sched_fork_proc() {
+    proc_t *parent = this_proc();
+    proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
+    proc->id = sched_pid++;
+    proc->cwd = parent->cwd;
+    proc->children = NULL;
+    proc->parent = parent;
+    proc->pagemap = vmm_fork(parent->pagemap);
+    memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
+    memcpy(proc->fd_table, parent->fd_table, 256 * 8);
+    proc->fd_count = parent->fd_count;
+    sched_proclist[proc->id] = proc;
+    return proc;
 }
 
 thread_t *sched_find_runnable_thread(cpu_t *cpu, bool sleep) {
@@ -248,8 +331,20 @@ proc_t *this_proc() {
 
 void sched_exit(int code) {
     thread_t *thread = this_thread();
-    LOG_INFO("Thread %d exited with code %d.\n", thread->id, code);
     thread->state = THREAD_ZOMBIE;
+    if (thread->parent->parent) {
+        // Check if there's any threads there waiting for a wake up (wait4)
+        thread_t *child = thread->parent->parent->children;
+        do {
+            if (child->flags & TFLAGS_WAITING4) {
+                child->flags &= ~TFLAGS_WAITING4;
+                child->state = THREAD_RUNNING;
+                child->waiting_status = code;
+                get_cpu(child->cpu_num)->has_runnable_thread = true;
+            }
+            child = child->next;
+        } while (child != thread->parent->parent->children);
+    }
     sched_yield();
 }
 

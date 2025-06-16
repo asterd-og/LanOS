@@ -23,6 +23,7 @@ NEW_LOCK(smp_lock);
 uint64_t started_count = 0;
 bool smp_started = false;
 int smp_last_cpu = 0;
+uint32_t smp_bsp_cpu;
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *stack = (void*)vmm_alloc(kernel_pagemap, 8, true);
@@ -70,6 +71,7 @@ void smp_init() {
     bsp_cpu->sched_lock = 0;
     bsp_cpu->has_runnable_thread = false;
     smp_cpu_list[bsp_cpu->id] = bsp_cpu;
+    smp_bsp_cpu = bsp_cpu->id;
     smp_setup_kstack(bsp_cpu);
     cpu_enable_sse();
     LOG_INFO("Detected %zu CPUs.\n", mp_response->cpu_count);

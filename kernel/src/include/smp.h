@@ -19,6 +19,8 @@ typedef struct {
     bool has_runnable_thread;
 } cpu_t;
 
+extern uint32_t smp_bsp_cpu;
+
 extern int smp_last_cpu;
 extern cpu_t *smp_cpu_list[MAX_CPU];
 extern bool smp_started;

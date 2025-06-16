@@ -98,6 +98,14 @@ void idt_irq_handler(context_t *ctx) {
 void idt_exception_handler(context_t *ctx) {
     if (ctx->int_no >= 32)
         return idt_irq_handler(ctx);
+    if (ctx->int_no == 14) {
+        lapic_stop_timer();
+        int should_halt = vmm_handle_fault(ctx);
+        if (!should_halt) {
+            sched_yield();
+            return;
+        }
+    }
     LOG_ERROR("Kernel exception caught: %s.\n", exception_messages[ctx->int_no]);
     serial_printf("Kernel crash on core %d at 0x%p. RSP: 0x%p\n", smp_started ? this_cpu()->id : 0,
         ctx->rip, ctx->rsp);

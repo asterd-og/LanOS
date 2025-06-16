@@ -22,7 +22,7 @@ uint64_t sys_lseek(uint32_t fd_idx, long offset, int whence) {
             fd->off += offset;
             break;
         case 2: // SEEK_END
-            fd->off = fd->node->size;
+            fd->off = fd->node->size + offset;
             break;
         default:
             return -EINVAL;

@@ -2,6 +2,7 @@
 #include <pmm.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     elf_hdr_t *hdr = (elf_hdr_t*)data;
@@ -28,6 +29,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
                 uint64_t page = (uint64_t)pmm_request();
                 vmm_map(pagemap, i, page, flags);
             }
+            vmm_new_mapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
             memcpy((void*)phdr->vaddr, (void*)(data + phdr->offset), phdr->filesz);
             if (phdr->memsz > phdr->filesz)
                 memset((void*)(phdr->vaddr + phdr->filesz), 0, phdr->memsz - phdr->filesz); // Zero out BSS

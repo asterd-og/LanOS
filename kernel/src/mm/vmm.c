@@ -104,10 +104,33 @@ vma_region_t *vma_insert_region(vma_region_t *after, uint64_t start, uint64_t pa
     return region;
 }
 
+vm_mapping_t *vmm_new_mapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags) {
+    vm_mapping_t *mapping = HIGHER_HALF((vm_mapping_t*)pmm_request());
+    mapping->start = start;
+    mapping->page_count = page_count;
+    mapping->flags = flags;
+    if (pagemap->vm_mappings) {
+        mapping->prev = pagemap->vm_mappings->prev;
+        mapping->next = pagemap->vm_mappings;
+        pagemap->vm_mappings->prev->next = mapping;
+        pagemap->vm_mappings->prev = mapping;
+        return mapping;
+    }
+    mapping->prev = mapping->next = mapping;
+    pagemap->vm_mappings = mapping;
+    return mapping;
+}
+
 void vma_remove_region(vma_region_t *region) {
     region->next->prev = region->prev;
     region->prev->next = region->next;
     pmm_free(PHYSICAL((void*)region));
+}
+
+void vmm_remove_mapping(vm_mapping_t *mapping) {
+    mapping->next->prev = mapping->prev;
+    mapping->prev->next = mapping->next;
+    pmm_free(PHYSICAL((void*)mapping));
 }
 
 uint64_t *vmm_new_level(uint64_t *level, uint64_t entry) {
@@ -153,10 +176,9 @@ void vmm_unmap(pagemap_t *pagemap, uint64_t vaddr) {
     pt = HIGHER_HALF(PTE_MASK(pt));
 
     pt[PTE(vaddr)] = 0;
-    mmu_invlpg(vaddr);
 }
 
-uint64_t vmm_get_phys(pagemap_t *pagemap, uint64_t vaddr) {
+uint64_t vmm_get_phys_flags(pagemap_t *pagemap, uint64_t vaddr) {
     uint64_t *pdpt = (uint64_t*)pagemap->pml4[PML4E(vaddr)];
     if (!PAGE_EXISTS(pdpt)) return 0;
     pdpt = HIGHER_HALF(PTE_MASK(pdpt));
@@ -169,7 +191,14 @@ uint64_t vmm_get_phys(pagemap_t *pagemap, uint64_t vaddr) {
     if (!PAGE_EXISTS(pt)) return 0;
     pt = HIGHER_HALF(PTE_MASK(pt));
 
-    return PTE_MASK(pt[PTE(vaddr)]);
+    return pt[PTE(vaddr)];
+}
+
+uint64_t vmm_get_phys(pagemap_t *pagemap, uint64_t vaddr) {
+    uint64_t page = vmm_get_phys_flags(pagemap, vaddr);
+    if (!page) return 0;
+
+    return PTE_MASK(page);
 }
 
 void vmm_map_range(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count) {
@@ -200,10 +229,9 @@ pagemap_t *vmm_new_pagemap() {
     return pagemap;
 }
 
-uint64_t vmm_internal_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
+uint64_t vmm_internal_alloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags) {
     // Look for the first fit on the list.
     vma_region_t *region = pagemap->vma_head->next;
-    uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
     uint64_t addr = 0;
     if (region == pagemap->vma_head) {
         addr = region->start + (region->page_count * PAGE_SIZE);
@@ -230,23 +258,11 @@ void *vmm_alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
     // Look for the first fit on the list.
     if (!page_count) return NULL;
     spinlock_lock(&pagemap->vma_lock);
-    uint64_t addr = vmm_internal_alloc(pagemap, page_count, user);
-    for (int i = 0; i < page_count; i++) {
-        vmm_map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)pmm_request(),
-            MM_READ | MM_WRITE | (user ? MM_USER : 0));
-    }
-    spinlock_free(&pagemap->vma_lock);
-    return (void*)addr;
-}
-
-void *vmm_alloc_to(pagemap_t *pagemap, uint64_t paddr, uint64_t page_count, bool user) {
-    if (!page_count) return NULL;
-    spinlock_lock(&pagemap->vma_lock);
-    uint64_t addr = vmm_internal_alloc(pagemap, page_count, user);
-    for (int i = 0; i < page_count; i++) {
-        vmm_map(pagemap, addr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE),
-            MM_READ | MM_WRITE | (user ? MM_USER : 0));
-    }
+    uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
+    uint64_t addr = vmm_internal_alloc(pagemap, page_count, flags);
+    for (int i = 0; i < page_count; i++)
+        vmm_map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)pmm_request(), flags);
+    vmm_new_mapping(pagemap, addr, page_count, flags);
     spinlock_free(&pagemap->vma_lock);
     return (void*)addr;
 }
@@ -262,6 +278,7 @@ void vmm_free(pagemap_t *pagemap, void *ptr) {
                 uint64_t phys_addr = vmm_get_phys(pagemap, (uint64_t)region->start + (i * PAGE_SIZE));
                 pmm_free((void*)phys_addr);
                 vmm_unmap(pagemap, region->start + (i * PAGE_SIZE));
+                mmu_invlpg(region->start + i * PAGE_SIZE);
             }
             vma_remove_region(region);
             spinlock_free(&pagemap->vma_lock);
@@ -269,4 +286,107 @@ void vmm_free(pagemap_t *pagemap, void *ptr) {
         }
     }
     spinlock_free(&pagemap->vma_lock);
+}
+
+pagemap_t *vmm_fork(pagemap_t *parent) {
+    pagemap_t *restore = vmm_switch_pagemap(kernel_pagemap);
+    pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)pmm_request());
+    pagemap->pml4 = HIGHER_HALF((uint64_t*)pmm_request());
+    memset(pagemap->pml4, 0, PAGE_SIZE);
+    for (uint64_t i = 256; i < 512; i++)
+        pagemap->pml4[i] = kernel_pagemap->pml4[i];
+    // Copy mappings
+    vm_mapping_t *mapping = parent->vm_mappings;
+    while (true) {
+        uint64_t page_flags = mapping->flags;
+        uint64_t new_flags = page_flags & ~MM_WRITE;
+        new_flags |= (1ULL << 55);
+        for (uint64_t i = 0; i < mapping->page_count; i++) {
+            uint64_t virt_addr = mapping->start + (i * PAGE_SIZE);
+            uint64_t phys_addr = vmm_get_phys(parent, virt_addr);
+            vmm_map(pagemap, virt_addr, phys_addr, new_flags);
+            vmm_map(parent, virt_addr, phys_addr, new_flags);
+        }
+        vmm_new_mapping(pagemap, mapping->start, mapping->page_count, page_flags);
+        mapping = mapping->next;
+        if (mapping == parent->vm_mappings)
+            break;
+    }
+    // Copy vma
+    vma_set_start(pagemap, parent->vma_head->start, parent->vma_head->page_count);
+    spinlock_lock(&parent->vma_lock);
+    vma_region_t *region = parent->vma_head->next;
+    for (; region != parent->vma_head; region = region->next)
+        vma_add_region(pagemap, region->start, region->page_count, region->flags);
+    spinlock_free(&parent->vma_lock);
+    vmm_switch_pagemap(restore);
+    return pagemap;
+}
+
+void vmm_clean_pagemap(pagemap_t *pagemap) {
+    // Free up vm allocations and unmap them
+    vma_region_t *region = pagemap->vma_head->next;
+    vma_region_t *next_region = region->next;
+    for (; region != pagemap->vma_head; region = next_region) {
+        next_region = region->next;
+        for (uint64_t i = 0; i < region->page_count; i++) {
+            uint64_t phys_addr = vmm_get_phys(pagemap, (uint64_t)region->start + (i * PAGE_SIZE));
+            pmm_free((void*)phys_addr);
+            vmm_unmap(pagemap, region->start + (i * PAGE_SIZE));
+        }
+        vma_remove_region(region);
+    }
+    // Remove vma head
+    pmm_free(PHYSICAL(pagemap->vma_head));
+    pagemap->vma_head = NULL;
+    // Clean mappings
+    vm_mapping_t *mapping = pagemap->vm_mappings->next;
+    vm_mapping_t *start_mapping = pagemap->vm_mappings;
+    bool cont = true;
+    do {
+        vm_mapping_t *next = mapping->next;
+        if (next == start_mapping)
+            cont = false;
+        for (uint64_t i = 0; i < mapping->page_count; i++)
+            vmm_unmap(pagemap, mapping->start + (i * PAGE_SIZE));
+        vmm_remove_mapping(mapping);
+        mapping = next;
+    } while (cont);
+    for (uint64_t i = 0; i < start_mapping->page_count; i++)
+        vmm_unmap(pagemap, start_mapping->start + (i * PAGE_SIZE));
+    vmm_remove_mapping(start_mapping);
+    pagemap->vm_mappings = NULL;
+}
+
+void vmm_destroy_pagemap(pagemap_t *pagemap) {
+    vmm_clean_pagemap(pagemap);
+    pmm_free(PHYSICAL(pagemap->pml4));
+    pmm_free(PHYSICAL(pagemap));
+}
+
+int vmm_handle_fault(context_t *ctx) {
+    // Check if the fault was a CoW fault, or if it was truly just a page fault.
+    uint64_t cr2 = 0;
+    __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
+    if (!smp_started || !this_cpu() || !this_thread()) {
+        printf("Page fault on 0x%p, Should NOT continue.\n", cr2);
+        return 1; // Should NOT continue execution.
+    }
+    pagemap_t *restore = vmm_switch_pagemap(kernel_pagemap);
+    uint64_t fault_addr = ALIGN_DOWN(cr2, PAGE_SIZE);
+    pagemap_t *pagemap = this_thread()->pagemap;
+    uint64_t page = vmm_get_phys_flags(pagemap, fault_addr);
+    uint64_t old_phys = PTE_MASK(page);
+    if (!old_phys) {
+        printf("Page fault on thread (0x%p).\n", cr2);
+        return 1;
+    }
+    uint64_t new_flags = PTE_FLAGS(page);
+    new_flags &= ~(1ULL << 5);
+    new_flags |= MM_WRITE;
+    uint64_t new_phys = (uint64_t)pmm_request();
+    memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)old_phys), PAGE_SIZE);
+    vmm_map(pagemap, fault_addr, new_phys, new_flags);
+    __asm__ volatile ("invlpg (%0)" : : "r"(fault_addr));
+    return 0;
 }

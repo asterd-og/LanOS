@@ -18,8 +18,7 @@
 #define THREAD_BLOCKED 2
 #define THREAD_SLEEPING 3
 
-#define TFLAGS_SYSCALL 1
-#define TFLAGS_SYSINTR 2
+#define TFLAGS_WAITING4 1
 
 typedef struct proc_t proc_t;
 
@@ -43,6 +42,7 @@ typedef struct thread_t {
     uint64_t sig_fs;
     pagemap_t *pagemap;
     uint64_t flags;
+    uint64_t waiting_status;
     struct thread_t *next;
     struct thread_t *prev;
     struct thread_t *list_next; // In the cpu thread list
@@ -67,7 +67,10 @@ extern proc_t *sched_proclist[256];
 void sched_init();
 
 proc_t *sched_new_proc();
+void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]);
 thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[]);
+thread_t *sched_fork_thread(proc_t *proc, thread_t *parent, syscall_frame_t *frame);
+proc_t *sched_fork_proc();
 void sched_switch(context_t *ctx);
 thread_t *this_thread();
 proc_t *this_proc();
