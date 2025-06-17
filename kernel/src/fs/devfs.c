@@ -2,16 +2,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <heap.h>
-#include <vfs.h>
 
 vnode_t *dev_node = NULL;
 
-size_t con_write(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
-    printf("%.*s", len, buffer);
-    return len;
-}
-
-void devfs_register_dev(char *name, void *read, void *write) {
+vnode_t *devfs_register_dev(char *name, void *read, void *write, void *ioctl) {
     vnode_t *node = (vnode_t*)kmalloc(sizeof(vnode_t));
     memset(node, 0, sizeof(vnode_t));
     node->type = 0; // TODO
@@ -19,8 +13,10 @@ void devfs_register_dev(char *name, void *read, void *write) {
     node->inode = 0;
     node->read = read;
     node->write = write;
+    node->ioctl = ioctl;
     memcpy(node->name, name, strlen(name) + 1);
     vfs_add_node(dev_node, node);
+    return node;
 }
 
 vnode_t *devfs_lookup(vnode_t *node, const char *name) {
@@ -44,5 +40,6 @@ void devfs_init() {
     memcpy(dev_node->name, "dev", 4);
     dev_node->lookup = devfs_lookup;
     vfs_add_node(root_node, dev_node);
-    devfs_register_dev("con", NULL, con_write);
+    tty_init();
+    devfb_init();
 }

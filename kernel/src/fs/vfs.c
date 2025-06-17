@@ -5,6 +5,7 @@
 #include <log.h>
 #include <devfs.h>
 #include <spinlock.h>
+#include <errno.h>
 
 vnode_t *root_node = NULL;
 
@@ -72,7 +73,7 @@ size_t vfs_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
         size_t res = node->read(node, buffer, off, len);
         return res;
     }
-    return NULL;
+    return 0;
 }
 
 size_t vfs_write(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
@@ -80,13 +81,19 @@ size_t vfs_write(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
         size_t res = node->write(node, buffer, off, len);
         return res;
     }
-    return NULL;
+    return 0;
 }
 
 vnode_t *vfs_lookup(vnode_t *node, const char *name) {
     if (node->lookup)
         return node->lookup(node, name);
     return NULL;
+}
+
+int vfs_ioctl(vnode_t *node, uint64_t request, void *arg) {
+    if (node->ioctl)
+        return node->ioctl(node, request, arg);
+    return -ENOTTY;
 }
 
 void vfs_populate(vnode_t *node) {

@@ -2,6 +2,9 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <vfs.h>
 
 void devfs_init();
-void devfs_register_dev(char *name, void *read, void *write);
+vnode_t *devfs_register_dev(char *name, void *read, void *write, void *ioctl);
+void devfb_init();
+void tty_init();

@@ -19,7 +19,7 @@ void ext2_disk_read(ext2_fs_t *fs, void *buffer, uint32_t block, size_t size) {
         fs->disk_buffer = vmm_alloc(kernel_pagemap, DIV_ROUND_UP(fs->disk_buffer_size, PAGE_SIZE), false);
     }
     ahci_read(fs->port, block * (fs->block_size / 512), DIV_ROUND_UP(size, 512), fs->disk_buffer);
-    memcpy(buffer, fs->disk_buffer, size);
+    memcpy(buffer, fs->disk_buffer, size); // crashes inside this memcpy
 }
 
 void ext2_read_inode(ext2_fs_t *fs, uint32_t inode_num, ext2_inode_t *inode) {
@@ -69,11 +69,13 @@ int ext2_read_triply(ext2_fs_t *fs, uint8_t *buffer, uint32_t id, uint32_t start
     int read = 0;
     uint32_t outer_start = start_block / (n * n);
     uint32_t inner_start = start_block % (n * n);
+    uint32_t doubly_index = inner_start / n;
+    uint32_t singly_index = inner_start % n;
 
     for (uint32_t i = outer_start; i < n && read < block_count; i++) {
-        uint32_t current_start = (i == outer_start) ? inner_start : 0;
+        // uint32_t current_start = (i == outer_start) ? inner_start : 0;
         int count = ext2_read_doubly(fs, buffer + read * fs->block_size, doubly_blocks[i],
-            current_start, block_count - read);
+            doubly_index * n + singly_index, block_count - read);
         read += count;
     }
 
@@ -83,11 +85,13 @@ int ext2_read_triply(ext2_fs_t *fs, uint8_t *buffer, uint32_t id, uint32_t start
 int ext2_read_inode_blocks(ext2_fs_t *fs, ext2_inode_t *inode, uint8_t *buffer, uint32_t off_block, uint32_t block_count) {
     uint64_t offset = 0;
     uint32_t n = fs->block_size / 4;
-    for (uint32_t i = off_block; i < 12 && block_count > 0; i++) {
-        ext2_disk_read(fs, buffer + offset, inode->direct_blocks[i], fs->block_size);
-        offset += fs->block_size;
-        off_block++;
-        block_count--;
+    if (off_block < 12) {
+        for (uint32_t i = off_block; i < 12 && block_count > 0; i++) {
+            ext2_disk_read(fs, buffer + offset, inode->direct_blocks[i], fs->block_size);
+            offset += fs->block_size;
+            off_block++;
+            block_count--;
+        }
     }
 
     uint32_t logical_block = off_block - 12;
@@ -158,7 +162,7 @@ size_t ext2_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
         return 0;
     if (off + len > inode.size)
         len = inode.size - off;
-    uint8_t *temp_buf = (uint8_t*)kmalloc(ALIGN_UP(len, fs->block_size));
+    uint8_t *temp_buf = (uint8_t*)kmalloc(ALIGN_UP(len, fs->block_size) + PAGE_SIZE);
     size_t aligned_off = ALIGN_DOWN(off, fs->block_size);
     uint32_t block_off = aligned_off / fs->block_size;
     ext2_read_inode_blocks(fs, &inode, temp_buf, block_off, DIV_ROUND_UP(len + (off - aligned_off), fs->block_size));
@@ -219,8 +223,7 @@ int ext2_mount(vnode_t *node, ahci_port_t *port) {
     fs->block_size = block_size;
 
     // For each block group in the fs, a group_desc is created
-    fs->block_group_count = superblock->block_count / superblock->blocks_per_group;
-    if (!fs->block_group_count) fs->block_group_count = 1;
+    fs->block_group_count = DIV_ROUND_UP(superblock->block_count, superblock->blocks_per_group);
     uint32_t block_group_size = sizeof(ext2_bgd_t) * fs->block_group_count;
     fs->block_groups = (ext2_bgd_t*)kmalloc(block_group_size);
     ext2_disk_read(fs, fs->block_groups, (fs->block_size > 1024 ? 1 : 2), block_group_size);

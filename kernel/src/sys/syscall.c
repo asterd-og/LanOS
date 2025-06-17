@@ -24,6 +24,7 @@ uint64_t sys_lseek();
 uint64_t sys_mmap();
 uint64_t sys_sigaction();
 void sys_sigreturn(syscall_frame_t *frame);
+uint64_t sys_ioctl();
 uint64_t sys_getpid();
 uint64_t sys_fork(syscall_frame_t *frame);
 uint64_t sys_execve();
@@ -45,6 +46,7 @@ void *syscall_handler_table[] = {
     [9] = sys_mmap,
     [13] = sys_sigaction,
     [15] = sys_sigreturn,
+    [16] = sys_ioctl,
     [39] = sys_getpid,
     [57] = sys_fork,
     [59] = sys_execve,

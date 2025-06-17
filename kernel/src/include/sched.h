@@ -19,6 +19,7 @@
 #define THREAD_SLEEPING 3
 
 #define TFLAGS_WAITING4 1
+#define TFLAGS_FNINIT 2
 
 typedef struct proc_t proc_t;
 
@@ -43,6 +44,7 @@ typedef struct thread_t {
     pagemap_t *pagemap;
     uint64_t flags;
     uint64_t waiting_status;
+    char *fx_area;
     struct thread_t *next;
     struct thread_t *prev;
     struct thread_t *list_next; // In the cpu thread list

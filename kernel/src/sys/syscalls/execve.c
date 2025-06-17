@@ -61,6 +61,9 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
     thread->pagemap = proc->pagemap = new_pagemap;
     thread->sig_deliver = 0;
     thread->sig_mask = 0;
+    memset(thread->fx_area, 0, 512);
+    *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
+    *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
 
     // Load ELF
     uint8_t *buffer = (uint8_t*)kmalloc(node->size);

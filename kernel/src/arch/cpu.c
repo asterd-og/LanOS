@@ -20,4 +20,5 @@ void cpu_enable_sse() {
         "or $(3 << 9), %rax\n"    // Set OSFXSR (bit 9) and OSXMMEXCPT (bit 10)
         "mov %rax, %cr4\n"
     );
+    __asm__ volatile ("fninit");
 }

@@ -58,9 +58,9 @@ proc_t *sched_new_proc() {
     proc->pagemap = vmm_new_pagemap();
     memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
     memset(proc->fd_table, 0, 256 * 8);
-    proc->fd_table[0] = fd_open("/dev/kb", O_WRONLY);
-    proc->fd_table[1] = fd_open("/dev/con", O_WRONLY);
-    proc->fd_table[2] = fd_open("/dev/con", O_WRONLY);
+    proc->fd_table[0] = fd_open("/dev/tty", O_RDONLY);
+    proc->fd_table[1] = fd_open("/dev/tty", O_WRONLY);
+    proc->fd_table[2] = fd_open("/dev/tty", O_WRONLY);
     proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY);
     proc->fd_count = 4;
     sched_proclist[proc->id] = proc;
@@ -122,6 +122,7 @@ void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[], char *en
     uint64_t thread_argv[argc];
     uint64_t stack_top = thread->ctx.rsp;
     uint64_t offset = 0;
+    if ((argc + envc) % 2 == 0) offset = 8;
     pagemap_t *restore = vmm_switch_pagemap(thread->pagemap);
     for (int i = 0; i < argc; i++) {
         int size = strlen(kernel_argv[i]) + 1;
@@ -140,7 +141,7 @@ void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[], char *en
     }
 
     // Set up argv and argc
-    offset += ((argc + envc % 2) ? 24 : 8);
+    offset += 8;
     *(uint64_t*)(stack_top - offset) = 0; // envp[envc] = NULL
 
     for (int i = envc - 1; i >= 0; i--) {
@@ -181,6 +182,12 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
     uint8_t *buffer = (uint8_t*)kmalloc(node->size);
     vfs_read(node, buffer, 0, node->size);
     thread->ctx.rip = elf_load(buffer, thread->pagemap);
+
+    // Fx area
+    thread->fx_area = vmm_alloc(kernel_pagemap, 1, true);
+    memset(thread->fx_area, 0, 512);
+    *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
+    *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
 
     // Kernel stack (16 KB)
     uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 4, false);
@@ -242,6 +249,8 @@ thread_t *sched_fork_thread(proc_t *proc, thread_t *parent, syscall_frame_t *fra
     thread->parent = proc;
     thread->pagemap = proc->pagemap;
     thread->flags = 0;
+    thread->fx_area = vmm_alloc(kernel_pagemap, 1, true);
+    memcpy(thread->fx_area, parent->fx_area, 512);
 
     sched_proc_add_thread(proc, thread);
 
@@ -327,6 +336,7 @@ void sched_switch(context_t *ctx) {
         thread_t *thread = cpu->current_thread;
         thread->fs = read_msr(FS_BASE);
         thread->ctx = *ctx;
+        __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area));
         // Check for signals
         for (int i = 0; i < 63; i++) {
             if (thread->sig_deliver & (1 << i) && !(thread->sig_mask & (1 << i))) {
@@ -341,6 +351,12 @@ void sched_switch(context_t *ctx) {
     vmm_switch_pagemap(next_thread->pagemap);
     write_msr(FS_BASE, next_thread->fs);
     write_msr(KERNEL_GS_BASE, (uint64_t)next_thread);
+    if (next_thread->flags & TFLAGS_FNINIT) {
+        __asm__ volatile ("fninit");
+        next_thread->flags &= ~TFLAGS_FNINIT;
+    } else {
+        __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area));
+    }
     spinlock_free(&cpu->sched_lock);
     lapic_oneshot(SCHED_VEC, SCHED_QUANTUM);
     lapic_eoi();

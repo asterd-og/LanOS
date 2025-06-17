@@ -130,7 +130,7 @@ void kmain() {
     LOG_OK("PS/2 Keyboard driver loaded.\n");
 
     proc_t *proc = sched_new_proc();
-    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"}, (char*[]){"test=c", "test2=a", NULL});
+    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"}, (char*[]){NULL});
 
     lapic_ipi_others(0, SCHED_VEC);
 
@@ -148,7 +148,8 @@ kernel_sym_t kernel_sym_table[] ={
     {"kfree", kfree},
     {"spinlock_lock", spinlock_lock},
     {"spinlock_free", spinlock_free},
-    {"devfs_register_dev", devfs_register_dev}
+    {"devfs_register_dev", devfs_register_dev},
+    {"vfs_open", vfs_open}
 };
 
 uint64_t kernel_find_sym(const char *name) {

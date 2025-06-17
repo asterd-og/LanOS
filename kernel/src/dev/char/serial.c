@@ -23,5 +23,5 @@ size_t serial_write(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
 }
 
 void serial_init() {
-    devfs_register_dev("serial", NULL, serial_write);
+    devfs_register_dev("serial", NULL, serial_write, NULL);
 }
