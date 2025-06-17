@@ -8,28 +8,53 @@
 #include <stdio.h>
 #include <string.h>
 
+void execve_cleanup(int argc, int envc, char **argv, char **envp) {
+    for (int i = 0; i < argc; i++)
+        kfree(argv[i]);
+    kfree(argv);
+    for (int j = 0; j < envc; j++)
+        kfree(envp[j]);
+    kfree(envp);
+}
+
 uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_envp) {
-    lapic_stop_timer();
     // Copy pathname to kernel
     char *pathname = (char*)kmalloc(strlen(u_pathname)+1);
     memcpy(pathname, u_pathname, strlen(u_pathname)+1);
-    // Copy argv to kernel
+    // Copy argv, envp to kernel
     int argc = 0;
     if (u_argv) {
         while (u_argv[argc++]);
         argc -= 1;
     }
+    int envc = 0;
+    if (u_envp) {
+        while (u_envp[envc++]);
+        envc -= 1;
+    }
     char **argv = (char**)kmalloc(argc * 8);
     for (int i = 0; i < argc; i++) {
-        char *arg = (char*)kmalloc(strlen(u_argv[i]) + 1);
-        memcpy(arg, u_argv[i], strlen(u_argv[i])+1);
+        int size = strlen(u_argv[i]) + 1;
+        char *arg = (char*)kmalloc(size);
+        argv[i] = arg;
+        memcpy(arg, u_argv[i], size);
     }
-    vmm_switch_pagemap(kernel_pagemap);
+    char **envp = (char**)kmalloc(envc * 8);
+    for (int i = 0; i < envc; i++) {
+        int size = strlen(u_envp[i]) + 1;
+        char *env = (char*)kmalloc(size);
+        envp[i] = env;
+        memcpy(env, u_envp[i], size);
+    }
     proc_t *proc = this_proc();
     thread_t *thread = this_thread();
     vnode_t *node = vfs_open(proc->cwd, pathname);
-    if (!node)
+    if (!node) {
+        execve_cleanup(argc, envc, argv, envp);
         return -ENOENT;
+    }
+    lapic_stop_timer();
+    vmm_switch_pagemap(kernel_pagemap);
     // Destroy old page map
     vmm_destroy_pagemap(thread->pagemap);
     pagemap_t *new_pagemap = vmm_new_pagemap();
@@ -57,8 +82,10 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
 
     // Set up stack (argc, argv, env)
     thread->ctx.rsp = thread_stack_top;
-    sched_prepare_user_stack(thread, argc, argv);
+    sched_prepare_user_stack(thread, argc, argv, envp);
     thread->thread_stack = thread->ctx.rsp;
+
+    execve_cleanup(argc, envc, argv, envp);
 
     thread->fs = 0;
     vmm_switch_pagemap(new_pagemap);

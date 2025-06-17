@@ -2,12 +2,16 @@
 #include <errno.h>
 #include <stdio.h>
 
+int count = 0;
+
 uint64_t sys_waitpid(int pid, int *status, int flags) {
-    if (pid >= sched_pid || !sched_proclist[pid])
-        return -ESRCH;
-    this_thread()->flags |= TFLAGS_WAITING4;
-    this_thread()->state = THREAD_BLOCKED;
+    thread_t *thread = this_thread();
+    thread->waiting_status = pid;
+    thread->flags |= TFLAGS_WAITING4;
+    thread->state = THREAD_BLOCKED;
     sched_yield();
-    *status = this_thread()->waiting_status;
-    return 0;
+    *status = thread->waiting_status & 0xffffffff;
+    int ret_pid = thread->waiting_status >> 32;
+    thread->waiting_status = 0;
+    return ret_pid;
 }

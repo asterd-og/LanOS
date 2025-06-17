@@ -113,6 +113,13 @@ void idt_exception_handler(context_t *ctx) {
     if (smp_started) {
         serial_printf("On thread %d\n", this_cpu()->current_thread->id);
     }
+    stackframe_t *stack;
+    __asm__ volatile ("movq %%rbp, %0" : "=r"(stack));
+    serial_printf("Stack trace:\n");
+    for (int i = 0; i < 5 && stack; i++) {
+        serial_printf("   0x%p\n", stack->rip);
+        stack = stack->rbp;
+    }
     // TODO: Dump registers.
     __asm__ volatile ("cli\n\t.1:\n\thlt\n\tjmp .1\n");
 }

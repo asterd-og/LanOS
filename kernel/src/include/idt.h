@@ -28,6 +28,11 @@ typedef struct {
     uint64_t ss;
 } context_t;
 
+typedef struct stackframe_t {
+    struct stackframe_t *rbp;
+    uint64_t rip;
+} stackframe_t;
+
 typedef struct {
     uint16_t offset_low;
     uint16_t selector;

@@ -130,7 +130,7 @@ void kmain() {
     LOG_OK("PS/2 Keyboard driver loaded.\n");
 
     proc_t *proc = sched_new_proc();
-    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"});
+    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"}, (char*[]){"test=c", "test2=a", NULL});
 
     lapic_ipi_others(0, SCHED_VEC);
 

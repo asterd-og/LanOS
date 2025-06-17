@@ -67,8 +67,8 @@ extern proc_t *sched_proclist[256];
 void sched_init();
 
 proc_t *sched_new_proc();
-void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]);
-thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[]);
+void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[], char *envp[]);
+thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[], char *envp[]);
 thread_t *sched_fork_thread(proc_t *proc, thread_t *parent, syscall_frame_t *frame);
 proc_t *sched_fork_proc();
 void sched_switch(context_t *ctx);

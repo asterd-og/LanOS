@@ -98,13 +98,24 @@ void sched_proc_add_thread(proc_t *parent, thread_t *thread) {
     parent->children->prev = thread;
 }
 
-void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]) {
-    // Copy the arguments into kernel memory
+void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[], char *envp[]) {
+    // Copy the arguments and envp into kernel memory
     char **kernel_argv = (char**)kmalloc(argc * 8);
     for (int i = 0; i < argc; i++) {
         int size = strlen(argv[i]) + 1;
         kernel_argv[i] = (char*)kmalloc(size);
         memcpy(kernel_argv[i], argv[i], size);
+    }
+
+    int envc = 0;
+    while (envp[envc++]);
+    envc -= 1;
+
+    char **kernel_envp = (char**)kmalloc(envc * 8);
+    for (int i = 0; i < envc; i++) {
+        int size = strlen(envp[i]) + 1;
+        kernel_envp[i] = (char*)kmalloc(size);
+        memcpy(kernel_envp[i], envp[i], size);
     }
 
     // Copy the arguments to the thread stack.
@@ -119,9 +130,23 @@ void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]) {
         memcpy((void*)(stack_top - offset), kernel_argv[i], size);
     }
 
+    // Copy the environment variables to the thread stack.
+    uint64_t thread_envp[envc];
+    for (int i = 0; i < envc; i++) {
+        int size = strlen(kernel_envp[i]) + 1;
+        offset += ALIGN_UP(size, 16);
+        thread_envp[i] = stack_top - offset;
+        memcpy((void*)(stack_top - offset), kernel_envp[i], size);
+    }
+
     // Set up argv and argc
-    offset += 8;
-    *(uint64_t*)(stack_top - offset) = 0; // NULL env for now
+    offset += ((argc + envc % 2) ? 24 : 8);
+    *(uint64_t*)(stack_top - offset) = 0; // envp[envc] = NULL
+
+    for (int i = envc - 1; i >= 0; i--) {
+        offset += 8;
+        *(uint64_t*)(stack_top - offset) = thread_envp[i];
+    }
 
     offset += 8;
     *(uint64_t*)(stack_top - offset) = 0; // argv[argc] = NULL
@@ -139,7 +164,7 @@ void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[]) {
     thread->ctx.rsp = stack_top - offset;
 }
 
-thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[]) {
+thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[], char *envp[]) {
     thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
     thread->id = sched_tid++;
     thread->cpu_num = cpu_num;
@@ -180,7 +205,7 @@ thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int 
 
     // Set up stack (argc, argv, env)
     thread->ctx.rsp = thread_stack_top;
-    sched_prepare_user_stack(thread, argc, argv);
+    sched_prepare_user_stack(thread, argc, argv, envp);
     thread->thread_stack = thread->ctx.rsp;
 
     thread->fs = 0;
@@ -283,11 +308,11 @@ thread_t *sched_find_runnable_thread(cpu_t *cpu, bool sleep) {
         cpu->has_runnable_thread = false;
         if (!sleep)
             return NULL;
-        LOG_INFO("No runnable tasks left. Scheduler sleeping.\n");
+        // LOG_INFO("No runnable tasks left. Scheduler sleeping.\n");
         spinlock_free(&cpu->sched_lock);
         while (!cpu->has_runnable_thread)
             __asm__ volatile ("pause");
-        LOG_INFO("Runnable task found! Waking up scheduler.\n");
+        // LOG_INFO("Runnable task found! Waking up scheduler.\n");
         spinlock_lock(&cpu->sched_lock);
     }
     return thread;
@@ -336,10 +361,10 @@ void sched_exit(int code) {
         // Check if there's any threads there waiting for a wake up (wait4)
         thread_t *child = thread->parent->parent->children;
         do {
-            if (child->flags & TFLAGS_WAITING4) {
+            if (child->flags & TFLAGS_WAITING4 && child->waiting_status == -1) {
                 child->flags &= ~TFLAGS_WAITING4;
                 child->state = THREAD_RUNNING;
-                child->waiting_status = code;
+                child->waiting_status = code | (thread->id << 32);
                 get_cpu(child->cpu_num)->has_runnable_thread = true;
             }
             child = child->next;

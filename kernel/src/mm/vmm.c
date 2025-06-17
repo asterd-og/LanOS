@@ -220,6 +220,9 @@ pagemap_t *vmm_new_pagemap() {
     pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)pmm_request());
     pagemap->pml4 = HIGHER_HALF((uint64_t*)pmm_request());
     memset(pagemap->pml4, 0, PAGE_SIZE);
+    pagemap->vm_mappings = NULL;
+    pagemap->vma_lock = 0;
+    pagemap->vma_head = NULL;
     for (uint64_t i = 256; i < 512; i++)
         pagemap->pml4[i] = kernel_pagemap->pml4[i];
     // The vma root is defined after the pagemap is created
