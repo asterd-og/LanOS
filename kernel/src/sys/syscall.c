@@ -72,12 +72,12 @@ void syscall_handler(syscall_frame_t *frame) {
         case 57: // fork
             frame->rax = sys_fork(frame);
             break;
-        default:
-            this_thread()->syscall_frame = *frame;
+        default: {
             uint64_t(*handler)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) =
                 syscall_handler_table[frame->rax];
             frame->rax = handler(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
             break;
+        }
     }
 }
 

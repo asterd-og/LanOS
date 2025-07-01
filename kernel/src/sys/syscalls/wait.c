@@ -1,15 +1,12 @@
 #include <sched.h>
-#include <errno.h>
-#include <stdio.h>
-
-int count = 0;
+#include <apic.h>
 
 uint64_t sys_waitpid(int pid, int *status, int flags) {
+    lapic_stop_timer();
     thread_t *thread = this_thread();
-    thread->waiting_status = pid;
-    thread->flags |= TFLAGS_WAITING4;
-    thread->state = THREAD_BLOCKED;
-    sched_yield();
+    // Check if the thread has already been terminated
+    while (!(this_thread()->sig_deliver & (1 << 17)))
+        sched_yield();
     *status = thread->waiting_status & 0xffffffff;
     int ret_pid = thread->waiting_status >> 32;
     thread->waiting_status = 0;

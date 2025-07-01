@@ -25,14 +25,15 @@ void vfs_init() {
 
 void vfs_add_node(vnode_t *parent, vnode_t *child) {
     child->parent = parent;
-    if (parent->child) {
-        vnode_t *it = parent->child;
-        while (it->next)
-            it = it->next;
-        it->next = child;
+    if (!parent->child) {
+        parent->child = child;
         return;
     }
-    parent->child = child;
+    vnode_t *it = parent->child;
+    while (it->next)
+        it = it->next;
+    it->next = child;
+    return;
 }
 
 vnode_t *vfs_open(vnode_t *root, const char *path) {
@@ -58,14 +59,18 @@ vnode_t *vfs_open(vnode_t *root, const char *path) {
         }
         token = strtok(NULL, "/");
     }
+    current->refcount++;
     kfree(new_path);
     return current;
 }
 
 void vfs_close(vnode_t *node) {
-    // TODO: Implement refcount and check if it's 0, if so, then free all child nodes
-    // and all the child/next nodes of those children (recursively)
-    kfree(node);
+    node->refcount--;
+    if (node->refcount == 0) {
+        kfree(node->mutex->queue);
+        kfree(node->mutex);
+        kfree(node);
+    }
 }
 
 size_t vfs_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
@@ -94,6 +99,12 @@ int vfs_ioctl(vnode_t *node, uint64_t request, void *arg) {
     if (node->ioctl)
         return node->ioctl(node, request, arg);
     return -ENOTTY;
+}
+
+int vfs_poll(vnode_t *node, int events) {
+    if (node->poll)
+        return node->poll(node, events);
+    return 0;
 }
 
 void vfs_populate(vnode_t *node) {

@@ -27,8 +27,13 @@
 #include <driver.h>
 #include <ports.h>
 #include <spinlock.h>
+#include <mutex.h>
 #include <devfs.h>
 #include <serial.h>
+#include <console.h>
+#include <semaphore.h>
+#include <ringbuffer.h>
+#include <evdev.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile LIMINE_BASE_REVISION(3);
@@ -129,8 +134,12 @@ void kmain() {
     driver_load_node(vfs_open(root_node, "/ps2kb.o"));
     LOG_OK("PS/2 Keyboard driver loaded.\n");
 
-    proc_t *proc = sched_new_proc();
-    thread_t *thread = sched_new_thread(proc, 1, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"}, (char*[]){NULL});
+    sched_install();
+
+    console_init();
+
+    proc_t *proc = sched_new_proc(true);
+    thread_t *thread = sched_new_thread(proc, 1, 0, vfs_open(root_node, "/usr/bin/bash"), 1, (char*[]){"bash"}, (char*[]){NULL});
 
     lapic_ipi_others(0, SCHED_VEC);
 
@@ -149,7 +158,11 @@ kernel_sym_t kernel_sym_table[] ={
     {"spinlock_lock", spinlock_lock},
     {"spinlock_free", spinlock_free},
     {"devfs_register_dev", devfs_register_dev},
-    {"vfs_open", vfs_open}
+    {"vfs_open", vfs_open},
+    {"mutex_acquire", mutex_acquire},
+    {"mutex_release", mutex_release},
+    {"evdev_create", evdev_create},
+    {"ringbuffer_write", ringbuffer_write},
 };
 
 uint64_t kernel_find_sym(const char *name) {

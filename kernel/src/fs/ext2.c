@@ -200,6 +200,7 @@ vnode_t *ext2_create_vnode(ext2_fs_t *fs) {
     node->lookup = ext2_lookup;
     node->populate = ext2_populate;
     node->mnt_info = fs;
+    node->mutex = mutex_create();
     return node;
 }
 

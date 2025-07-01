@@ -9,58 +9,52 @@
 #include <spinlock.h>
 #include <log.h>
 #include <cpu.h>
+#include <serial.h>
 
 uint64_t sched_tid = 0;
 uint64_t sched_pid = 0;
 
 proc_t *sched_proclist[256] = { 0 };
 
-void *sighandle = NULL;
-
-void sched_sighandle(int sig_no, void *handler);
-void sched_sighandle_end();
-
-int sched_sigjmp(thread_t *thread, int sig_no) {
-    proc_t *parent = thread->parent;
-    if (!parent->sig_handlers[sig_no].handler) {
-        printf("Unhandled signal %d for tid %d, killing thread.\n", sig_no, thread->id);
-        thread->state = THREAD_ZOMBIE;
-        return 1;
-    }
-    thread->sig_fs = read_msr(FS_BASE);
-    memcpy(&thread->sig_ctx, &thread->ctx, sizeof(context_t));
-    thread->ctx.rsp = thread->sig_stack + PAGE_SIZE;
-    *(uint64_t*)(thread->ctx.rsp - 8) = (uint64_t)parent->sig_handlers[sig_no].sa_restorer;
-    thread->ctx.rsp -= 8;
-    thread->ctx.cs = 0x23;
-    thread->ctx.ss = 0x1b;
-    thread->ctx.rip = (uint64_t)sighandle;
-    thread->ctx.rdi = sig_no;
-    thread->ctx.rsi = (uint64_t)parent->sig_handlers[sig_no].handler;
-    return 0;
-}
+void sched_preempt(context_t *ctx);
+void sched_switch(context_t *ctx);
 
 void sched_init() {
-    idt_install_irq(16, sched_switch);
+    idt_install_irq(16, sched_preempt);
+    idt_install_irq(17, sched_switch);
     idt_set_ist(SCHED_VEC, 1);
-    uint64_t sighandle_size = (uint64_t)sched_sighandle_end - (uint64_t)sched_sighandle;
-    sighandle = vmm_alloc(kernel_pagemap, DIV_ROUND_UP(sighandle_size, PAGE_SIZE), true);
-    memcpy(sighandle, sched_sighandle, sighandle_size);
-    // ^~ Wicked way of not copying other kernel functions accidentally
+    idt_set_ist(SCHED_VEC+1, 1);
 }
 
-proc_t *sched_new_proc() {
+void sched_idle() {
+    while (1) {
+        sched_yield();
+    }
+}
+
+void sched_install() {
+    for (uint32_t i = 0; i <= smp_last_cpu; i++) {
+        cpu_t *cpu = smp_cpu_list[i];
+        if (!cpu || cpu->id == smp_bsp_cpu)
+            continue;
+        proc_t *proc = sched_new_proc(false);
+        thread_t *thread = sched_new_kthread(proc, cpu->id, THREAD_QUEUE_CNT - 1, sched_idle);
+    }
+}
+
+proc_t *sched_new_proc(bool user) {
     proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
     proc->id = sched_pid++;
     proc->cwd = root_node;
-    proc->children = NULL;
+    proc->threads = NULL;
     proc->parent = NULL;
-    proc->pagemap = vmm_new_pagemap();
+    proc->children = proc->sibling = NULL;
+    proc->pagemap = (user ? vmm_new_pagemap() : kernel_pagemap);
     memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
     memset(proc->fd_table, 0, 256 * 8);
-    proc->fd_table[0] = fd_open("/dev/tty", O_RDONLY);
-    proc->fd_table[1] = fd_open("/dev/tty", O_WRONLY);
-    proc->fd_table[2] = fd_open("/dev/tty", O_WRONLY);
+    proc->fd_table[0] = fd_open("/dev/pts0", O_RDONLY);
+    proc->fd_table[1] = fd_open("/dev/pts0", O_WRONLY);
+    proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY);
     proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY);
     proc->fd_count = 4;
     sched_proclist[proc->id] = proc;
@@ -68,34 +62,33 @@ proc_t *sched_new_proc() {
 }
 
 void sched_add_thread(cpu_t *cpu, thread_t *thread) {
-    spinlock_lock(&cpu->sched_lock);
     cpu->thread_count++;
-    if (!cpu->thread_head) {
+    thread_queue_t *queue = &cpu->thread_queues[thread->priority];
+    if (!queue->head) {
         thread->list_next = thread;
         thread->list_prev = thread;
-        cpu->thread_head = thread;
-        spinlock_free(&cpu->sched_lock);
+        queue->head = thread;
+        queue->current = thread;
         return;
     }
 
-    thread->list_next = cpu->thread_head;
-    thread->list_prev = cpu->thread_head->list_prev;
-    cpu->thread_head->list_prev->list_next = thread;
-    cpu->thread_head->list_prev = thread;
-    spinlock_free(&cpu->sched_lock);
+    thread->list_next = queue->head;
+    thread->list_prev = queue->head->list_prev;
+    queue->head->list_prev->list_next = thread;
+    queue->head->list_prev = thread;
 }
 
 void sched_proc_add_thread(proc_t *parent, thread_t *thread) {
-    if (!parent->children) {
-        parent->children = thread;
+    if (!parent->threads) {
+        parent->threads = thread;
         thread->next = thread;
         thread->prev = thread;
         return;
     }
-    thread->next = parent->children;
-    thread->prev = parent->children->prev;
-    parent->children->prev->next = thread;
-    parent->children->prev = thread;
+    thread->next = parent->threads;
+    thread->prev = parent->threads->prev;
+    parent->threads->prev->next = thread;
+    parent->threads->prev = thread;
 }
 
 void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[], char *envp[]) {
@@ -163,15 +156,65 @@ void sched_prepare_user_stack(thread_t *thread, int argc, char *argv[], char *en
     vmm_switch_pagemap(restore);
 
     thread->ctx.rsp = stack_top - offset;
+
+    for (int i = 0; i < argc; i++)
+        kfree(kernel_argv[i]);
+    kfree(kernel_argv);
+    for (int i = 0; i < envc; i++)
+        kfree(kernel_envp[i]);
+    kfree(kernel_envp);
 }
 
-thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, vnode_t *node, int argc, char *argv[], char *envp[]) {
+thread_t *sched_new_kthread(proc_t *parent, uint32_t cpu_num, int priority, void *entry) {
     thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
     thread->id = sched_tid++;
     thread->cpu_num = cpu_num;
     thread->parent = parent;
     thread->pagemap = parent->pagemap;
     thread->flags = 0;
+    thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
+    sched_proc_add_thread(parent, thread);
+    thread->sig_deliver = 0;
+    thread->sig_mask = 0;
+
+    // Fx area
+    thread->fx_area = vmm_alloc(kernel_pagemap, 1, true);
+    memset(thread->fx_area, 0, 512);
+    *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
+    *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
+
+    // Stack (4 KB)
+    uint64_t kernel_stack = (uint64_t)vmm_alloc(kernel_pagemap, 4, false);
+    memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+
+    thread->kernel_stack = kernel_stack;
+    thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+    thread->stack = kernel_stack;
+
+    thread->ctx.rip = (uint64_t)entry;
+    thread->ctx.cs = 0x08;
+    thread->ctx.ss = 0x10;
+    thread->ctx.rflags = 0x202;
+    thread->ctx.rsp = thread->kernel_rsp;
+    thread->thread_stack = thread->ctx.rsp;
+    thread->fs = 0;
+
+    thread->state = THREAD_RUNNING;
+    get_cpu(cpu_num)->has_runnable_thread = true;
+
+    sched_add_thread(get_cpu(cpu_num), thread);
+
+    return thread;
+}
+
+thread_t *sched_new_thread(proc_t *parent, uint32_t cpu_num, int priority, vnode_t *node, int argc, char *argv[], char *envp[]) {
+    thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+    thread->id = sched_tid++;
+    thread->cpu_num = cpu_num;
+    thread->parent = parent;
+    thread->pagemap = parent->pagemap;
+    thread->flags = 0;
+    thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
 
     sched_proc_add_thread(parent, thread);
 
@@ -296,8 +339,17 @@ proc_t *sched_fork_proc() {
     proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
     proc->id = sched_pid++;
     proc->cwd = parent->cwd;
-    proc->children = NULL;
+    proc->threads = NULL;
     proc->parent = parent;
+    proc->sibling = NULL;
+    if (!parent->children) parent->children = proc;
+    else {
+        proc_t *last_sibling = parent->children;
+        while (last_sibling->sibling != NULL)
+            last_sibling = last_sibling->sibling;
+        last_sibling->sibling = proc;
+        proc->sibling = NULL;
+    }
     proc->pagemap = vmm_fork(parent->pagemap);
     memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
     memcpy(proc->fd_table, parent->fd_table, 256 * 8);
@@ -306,63 +358,103 @@ proc_t *sched_fork_proc() {
     return proc;
 }
 
-thread_t *sched_find_runnable_thread(cpu_t *cpu, bool sleep) {
-    if (!cpu->current_thread)
-        return cpu->thread_head;
-    thread_t *thread = cpu->current_thread->list_next;
-    while (thread->state != THREAD_RUNNING) {
-        thread = thread->list_next;
-        if (thread != cpu->current_thread)
-            continue;
-        cpu->has_runnable_thread = false;
-        if (!sleep)
-            return NULL;
-        // LOG_INFO("No runnable tasks left. Scheduler sleeping.\n");
-        spinlock_free(&cpu->sched_lock);
-        while (!cpu->has_runnable_thread)
-            __asm__ volatile ("pause");
-        // LOG_INFO("Runnable task found! Waking up scheduler.\n");
-        spinlock_lock(&cpu->sched_lock);
+int sched_demote(cpu_t *cpu, thread_t *thread) {
+    if (thread->priority == THREAD_QUEUE_CNT - 1)
+        return 1;
+    serial_printf("Demoted thread %d to queue %d.\n", thread->id, thread->priority);
+    thread_queue_t *old_queue = &cpu->thread_queues[thread->priority];
+    thread->priority++;
+    thread_queue_t *new_queue = &cpu->thread_queues[thread->priority];
+    if (thread->list_next == thread) {
+        old_queue->head = NULL;
+        old_queue->current = NULL;
+    } else {
+        if (old_queue->head == thread)
+            old_queue->head = thread->list_next;
+        if (old_queue->current == thread)
+            old_queue->current = thread->list_next;
+        thread->list_next->list_prev = thread->list_prev;
+        thread->list_prev->list_next = thread->list_next;
     }
-    return thread;
+    sched_add_thread(cpu, thread);
+    return 0;
+}
+
+thread_t *sched_pick(cpu_t *cpu, bool sleep) {
+    for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
+        thread_queue_t *queue = &cpu->thread_queues[i];
+        if (!queue->head)
+            continue;
+        thread_t *start = queue->head;
+        thread_t *thread = queue->current;
+        thread_t *next;
+        bool found = false;
+        do {
+            next = thread->list_next;
+            if (!(thread->state == THREAD_RUNNING)) {
+                thread = next;
+                continue;
+            }
+            if (!(thread->flags & TFLAGS_PREEMPTED)) {
+                thread->preempt_count = 0;
+                found = true;
+                break;
+            }
+            thread->preempt_count++;
+            if (thread->preempt_count == SCHED_PREEMPTION_MAX) {
+                int ret = sched_demote(cpu, thread);
+                thread->preempt_count = 0;
+                thread->flags &= ~TFLAGS_PREEMPTED;
+                if (ret == 1) {
+                    i = 0;
+                    break;
+                }
+            } else {
+                found = true;
+                break;
+            }
+            thread = next;
+        } while (thread != queue->head);
+        if (found) {
+            queue->current = thread->next;
+            thread->flags &= ~TFLAGS_PREEMPTED;
+            return thread;
+        }
+    }
+    return NULL;
 }
 
 void sched_switch(context_t *ctx) {
+    lapic_stop_timer();
     cpu_t *cpu = this_cpu();
-    while (!cpu->thread_head)
-        __asm__ volatile ("pause");
     spinlock_lock(&cpu->sched_lock);
     if (cpu->current_thread) {
         thread_t *thread = cpu->current_thread;
         thread->fs = read_msr(FS_BASE);
         thread->ctx = *ctx;
         __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area));
-        // Check for signals
-        for (int i = 0; i < 63; i++) {
-            if (thread->sig_deliver & (1 << i) && !(thread->sig_mask & (1 << i))) {
-                sched_sigjmp(thread, i);
-                thread->sig_deliver &= ~(1 << i);
-            }
-        }
     }
-    thread_t *next_thread = sched_find_runnable_thread(cpu, true);
+    thread_t *next_thread = sched_pick(cpu, true);
     cpu->current_thread = next_thread;
     *ctx = next_thread->ctx;
     vmm_switch_pagemap(next_thread->pagemap);
     write_msr(FS_BASE, next_thread->fs);
     write_msr(KERNEL_GS_BASE, (uint64_t)next_thread);
-    if (next_thread->flags & TFLAGS_FNINIT) {
-        __asm__ volatile ("fninit");
-        next_thread->flags &= ~TFLAGS_FNINIT;
-    } else {
-        __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area));
-    }
+    __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area));
     spinlock_free(&cpu->sched_lock);
-    lapic_oneshot(SCHED_VEC, SCHED_QUANTUM);
+    // An ideal thread wouldn't need the timer to preempt.
+    lapic_oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
     lapic_eoi();
 }
 
+void sched_preempt(context_t *ctx) {
+    this_thread()->flags |= TFLAGS_PREEMPTED;
+    this_thread()->preempt_count++;
+    sched_switch(ctx);
+}
+
 thread_t *this_thread() {
+    if (!this_cpu()) return NULL;
     return this_cpu()->current_thread;
 }
 
@@ -371,24 +463,38 @@ proc_t *this_proc() {
 }
 
 void sched_exit(int code) {
+    lapic_stop_timer();
     thread_t *thread = this_thread();
     thread->state = THREAD_ZOMBIE;
-    if (thread->parent->parent) {
-        // Check if there's any threads there waiting for a wake up (wait4)
-        thread_t *child = thread->parent->parent->children;
-        do {
-            if (child->flags & TFLAGS_WAITING4 && child->waiting_status == -1) {
-                child->flags &= ~TFLAGS_WAITING4;
-                child->state = THREAD_RUNNING;
-                child->waiting_status = code | (thread->id << 32);
-                get_cpu(child->cpu_num)->has_runnable_thread = true;
-            }
-            child = child->next;
-        } while (child != thread->parent->parent->children);
+    thread->exit_code = code;
+    // Wake up any threads waiting on this process
+    proc_t *parent = this_proc()->parent;
+    if (!parent) {
+        sched_yield();
+        return;
     }
+    thread_t *child = parent->threads;
+    do {
+        child->sig_deliver |= 1 << 17;
+        child->waiting_status = code | (thread->id << 32);
+        child = child->next;
+    } while (child != parent->threads);
     sched_yield();
 }
 
 void sched_yield() {
-    lapic_ipi(this_cpu()->id, SCHED_VEC);
+    lapic_stop_timer();
+    this_thread()->flags &= ~TFLAGS_PREEMPTED;
+    this_thread()->preempt_count = 0;
+    lapic_ipi(this_cpu()->id, SCHED_VEC+1);
+}
+
+void sched_pause() {
+    lapic_stop_timer();
+}
+
+void sched_resume() {
+    this_thread()->flags &= ~TFLAGS_PREEMPTED;
+    this_thread()->preempt_count = 0;
+    lapic_ipi(this_cpu()->id, SCHED_VEC+1);
 }

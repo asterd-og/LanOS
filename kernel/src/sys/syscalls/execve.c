@@ -32,14 +32,16 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
         while (u_envp[envc++]);
         envc -= 1;
     }
-    char **argv = (char**)kmalloc(argc * 8);
+    char **argv = (char**)kmalloc((argc + 1) * 8);
+    argv[argc] = NULL;
     for (int i = 0; i < argc; i++) {
         int size = strlen(u_argv[i]) + 1;
         char *arg = (char*)kmalloc(size);
         argv[i] = arg;
         memcpy(arg, u_argv[i], size);
     }
-    char **envp = (char**)kmalloc(envc * 8);
+    char **envp = (char**)kmalloc((envc + 1) * 8);
+    envp[envc] = NULL;
     for (int i = 0; i < envc; i++) {
         int size = strlen(u_envp[i]) + 1;
         char *env = (char*)kmalloc(size);
@@ -53,6 +55,7 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
         execve_cleanup(argc, envc, argv, envp);
         return -ENOENT;
     }
+    proc->cwd = node->parent;
     lapic_stop_timer();
     vmm_switch_pagemap(kernel_pagemap);
     // Destroy old page map

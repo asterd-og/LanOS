@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <pmm.h>
 #include <syscall.h>
+#include <string.h>
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_mp_request limine_mp = {
@@ -31,6 +32,15 @@ void smp_setup_kstack(cpu_t *cpu) {
     tss_set_rsp(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
 }
 
+void smp_setup_thread_queue(cpu_t *cpu) {
+    memset(cpu->thread_queues, 0, THREAD_QUEUE_CNT * sizeof(thread_queue_t));
+    uint64_t quantum = 5;
+    for (int i = 0; i < THREAD_QUEUE_CNT; i++) {
+        cpu->thread_queues[i].quantum = quantum;
+        quantum += 5;
+    }
+}
+
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     vmm_switch_pagemap(kernel_pagemap);
     spinlock_lock(&smp_lock);
@@ -42,10 +52,10 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     cpu->lapic_ticks = lapic_init_timer();
     cpu->pagemap = kernel_pagemap;
     cpu->thread_count = 0;
-    cpu->thread_head = NULL;
     cpu->sched_lock = 0;
     cpu->has_runnable_thread = false;
     syscall_init();
+    smp_setup_thread_queue(cpu);
     smp_setup_kstack(cpu);
     cpu_enable_sse();
     LOG_OK("Initialized CPU %d.\n", mp_info->lapic_id);
@@ -67,11 +77,11 @@ void smp_init() {
     bsp_cpu->pagemap = kernel_pagemap;
     bsp_cpu->lapic_ticks = lapic_init_timer();
     bsp_cpu->thread_count = 0;
-    bsp_cpu->thread_head = NULL;
     bsp_cpu->sched_lock = 0;
     bsp_cpu->has_runnable_thread = false;
     smp_cpu_list[bsp_cpu->id] = bsp_cpu;
     smp_bsp_cpu = bsp_cpu->id;
+    smp_setup_thread_queue(bsp_cpu);
     smp_setup_kstack(bsp_cpu);
     cpu_enable_sse();
     LOG_INFO("Detected %zu CPUs.\n", mp_response->cpu_count);
@@ -90,6 +100,7 @@ void smp_init() {
 }
 
 cpu_t *this_cpu() {
+    if (!smp_started) return NULL;
     return smp_cpu_list[lapic_get_id()];
 }
 

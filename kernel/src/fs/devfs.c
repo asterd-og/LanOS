@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <heap.h>
+#include <evdev.h>
 
 vnode_t *dev_node = NULL;
 
@@ -14,6 +15,7 @@ vnode_t *devfs_register_dev(char *name, void *read, void *write, void *ioctl) {
     node->read = read;
     node->write = write;
     node->ioctl = ioctl;
+    node->mutex = mutex_create();
     memcpy(node->name, name, strlen(name) + 1);
     vfs_add_node(dev_node, node);
     return node;
@@ -40,6 +42,6 @@ void devfs_init() {
     memcpy(dev_node->name, "dev", 4);
     dev_node->lookup = devfs_lookup;
     vfs_add_node(root_node, dev_node);
-    tty_init();
+    evdev_init();
     devfb_init();
 }

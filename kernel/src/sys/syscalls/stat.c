@@ -30,7 +30,7 @@ typedef struct {
 #define S_IXUSR 00100
 
 uint64_t sys_stat(const char *pathname, stat_t *statbuf) {
-    vnode_t *node = vfs_open(root_node, pathname);
+    vnode_t *node = vfs_open(this_proc()->cwd, pathname);
     if (!node)
         return -ENOENT;
 
@@ -39,6 +39,7 @@ uint64_t sys_stat(const char *pathname, stat_t *statbuf) {
     statbuf->st_uid = 0;
     statbuf->st_gid = 0;
     statbuf->st_size = node->size;
+    statbuf->st_ino = node->inode;
     return 0;
 }
 
