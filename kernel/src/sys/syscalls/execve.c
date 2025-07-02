@@ -55,8 +55,8 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
         execve_cleanup(argc, envc, argv, envp);
         return -ENOENT;
     }
+    sched_pause();
     proc->cwd = node->parent;
-    lapic_stop_timer();
     vmm_switch_pagemap(kernel_pagemap);
     // Destroy old page map
     vmm_destroy_pagemap(thread->pagemap);
@@ -97,6 +97,6 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
     vmm_switch_pagemap(new_pagemap);
     __asm__ volatile ("swapgs");
     this_cpu()->current_thread = NULL;
-    sched_yield();
+    sched_resume();
     return 0;
 }

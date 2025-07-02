@@ -110,9 +110,8 @@ void idt_exception_handler(context_t *ctx) {
     serial_printf("Kernel crash on core %d at 0x%p. RSP: 0x%p\n", smp_started ? this_cpu()->id : 0,
         ctx->rip, ctx->rsp);
     serial_printf("CS: 0x%x SS: 0x%x\n", ctx->cs, ctx->ss);
-    if (smp_started) {
+    if (smp_started && this_cpu()->current_thread)
         serial_printf("On thread %d\n", this_cpu()->current_thread->id);
-    }
     stackframe_t *stack;
     __asm__ volatile ("movq %%rbp, %0" : "=r"(stack));
     serial_printf("Stack trace:\n");

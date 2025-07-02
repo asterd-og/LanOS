@@ -287,6 +287,7 @@ uint64_t sched_get_rip();
 thread_t *sched_fork_thread(proc_t *proc, thread_t *parent, syscall_frame_t *frame) {
     thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
     cpu_t *cpu = get_lw_cpu();
+    spinlock_lock(&cpu->sched_lock);
     thread->id = sched_tid++;
     thread->cpu_num = cpu->id;
     thread->parent = proc;
@@ -330,6 +331,7 @@ thread_t *sched_fork_thread(proc_t *proc, thread_t *parent, syscall_frame_t *fra
     cpu->has_runnable_thread = true;
     
     sched_add_thread(cpu, thread);
+    spinlock_free(&cpu->sched_lock);
 
     return thread;
 }
@@ -380,7 +382,7 @@ int sched_demote(cpu_t *cpu, thread_t *thread) {
     return 0;
 }
 
-thread_t *sched_pick(cpu_t *cpu, bool sleep) {
+thread_t *sched_pick(cpu_t *cpu) {
     for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
         thread_queue_t *queue = &cpu->thread_queues[i];
         if (!queue->head)
@@ -434,7 +436,7 @@ void sched_switch(context_t *ctx) {
         thread->ctx = *ctx;
         __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area));
     }
-    thread_t *next_thread = sched_pick(cpu, true);
+    thread_t *next_thread = sched_pick(cpu);
     cpu->current_thread = next_thread;
     *ctx = next_thread->ctx;
     vmm_switch_pagemap(next_thread->pagemap);
@@ -494,7 +496,9 @@ void sched_pause() {
 }
 
 void sched_resume() {
-    this_thread()->flags &= ~TFLAGS_PREEMPTED;
-    this_thread()->preempt_count = 0;
+    if (this_thread()) {
+        this_thread()->flags &= ~TFLAGS_PREEMPTED;
+        this_thread()->preempt_count = 0;
+    }
     lapic_ipi(this_cpu()->id, SCHED_VEC+1);
 }

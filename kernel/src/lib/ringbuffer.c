@@ -3,7 +3,6 @@
 #include <string.h>
 #include <serial.h>
 #include <sched.h>
-#include <stdio.h>
 
 ringbuffer_t *ringbuffer_create(size_t item_count, size_t item_size) {
     ringbuffer_t *ringbuffer = (ringbuffer_t*)kmalloc(sizeof(ringbuffer_t));

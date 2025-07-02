@@ -7,6 +7,7 @@
 #include <heap.h>
 #include <input.h>
 #include <serial.h>
+#include <sched.h>
 
 int pty_count = 0;
 
@@ -35,7 +36,7 @@ size_t pty_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
         char c = 0;
         size_t buf_idx = 0;
         memset(buffer, 0, len);
-        for (size_t i = 0; i < len; i++) {
+        while (buf_idx < len) {
             ringbuffer_read(pty_ep->pair->slave_ringbuf, &c);
             if (c == termios->c_cc[VERASE]) {
                 if (buf_idx == 0) continue;
@@ -44,23 +45,22 @@ size_t pty_read(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
                 if (echo) {
                     const char bs_seq[] = {'\b', ' ', '\b'};
                     for (int j = 0; j < 3; j++)
-                        ringbuffer_write(pty_ep->pair->master_ringbuf, &bs_seq[j]);
+                        ringbuffer_write(pty_ep->pair->master_ringbuf, (void*)&bs_seq[j]);
                 }
-            } else {
-                buffer[buf_idx++] = c;
-                if (echo) ringbuffer_write(pty_ep->pair->master_ringbuf, &c);
-                if (c == '\n')
-                    break;
-                if (i == len - 1 && buf_idx == 0)
-                    i = 0;
+                continue;
             }
+            buffer[buf_idx++] = c;
+            if (echo)
+                ringbuffer_write(pty_ep->pair->master_ringbuf, &c);
+            if (c == '\n')
+                break;
         }
-        return len;
+        return buf_idx;
     }
     ringbuffer_t *ringbuf = (pty_ep->is_master ? pty_ep->pair->master_ringbuf : pty_ep->pair->slave_ringbuf);
     size_t i = 0;
     while (i < len) {
-        if (!ringbuf->data_count) break;
+        if (!ringbuf->data_count && i > 0) break;
         ringbuffer_read(ringbuf, buffer + i);
         i++;
     }
@@ -92,8 +92,12 @@ int pty_poll(vnode_t *node, int events) {
     if (events & POLLOUT)
         ready |= POLLOUT;
     if (!ready) {
-        if (events & POLLIN)
+        if (events & POLLIN) {
+            // serial_printf("Waiting!\n");
             ringbuffer_wait_data(ringbuf);
+            // serial_printf("Woken up!\n");
+            ready |= POLLIN;
+        }
     }
     return ready;
 }

@@ -17,7 +17,7 @@ void console_backend() {
     bool caps = false;
     while (1) {
         input_event_t ev;
-        off += vfs_read(kb_node, &ev, off, sizeof(input_event_t));
+        off += vfs_read(kb_node, (uint8_t*)&ev, off, sizeof(input_event_t));
         char c = 0;
         if (ev.code == KEY_LEFTSHIFT || ev.code == KEY_RIGHTSHIFT)
             shift = ev.value;
@@ -29,7 +29,7 @@ void console_backend() {
             else if (caps) c = code_to_ascii_caps[ev.code];
         }
         if (ev.value && c)
-            vfs_write(master, &c, 0, 1);
+            vfs_write(master, (uint8_t*)&c, 0, 1);
     }
 }
 

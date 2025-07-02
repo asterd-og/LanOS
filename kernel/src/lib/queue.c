@@ -26,7 +26,7 @@ void *queue_dequeue(queue_t *queue) {
     if (!it)
         return NULL;
     queue->head = it->next;
-    if (!queue->tail)
+    if (queue->tail == it)
         queue->tail = NULL;
     void *data = it->data;
     kfree(it);

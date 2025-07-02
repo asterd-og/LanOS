@@ -17,7 +17,7 @@ void serial_printf(const char *str, ...) {
 
 size_t serial_write(vnode_t *node, uint8_t *buffer, size_t off, size_t len) {
     for (int i = 0; i < len; i++) {
-        outb(0xe9, buffer[i]);
+        // outb(0xe9, buffer[i]);
     }
     return len;
 }
